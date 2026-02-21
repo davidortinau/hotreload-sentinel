@@ -30,7 +30,13 @@ Hot Reload Sentinel automates all of it.
 
 ![Copilot CLI asking the developer to confirm whether a hot reload change rendered correctly](media/hot-reload-confirmation.png)
 
+When a change fails, the developer reports it and the sentinel records the failure with full diagnostic context:
+
+![Developer confirming a hot reload failure through Copilot CLI](media/hot-reload-failure-confirmation.png)
+
 **Report** -- Generates a structured GitHub issue from the session, splitting confirmed successes from failures. Includes the exact code diffs, ENC log excerpts, heartbeat state, framework context, and environment details needed to file a reproducible bug report.
+
+![A GitHub issue filed from hot reload sentinel diagnostic data](media/github-issue-filed.png)
 
 ## Install
 
