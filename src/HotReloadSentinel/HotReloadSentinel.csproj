@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HotReloadSentinel</RootNamespace>
+
+    <!-- dotnet tool packaging -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>hotreload-sentinel</ToolCommandName>
+    <PackageId>HotReloadSentinel</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>David Ortinau</Authors>
+    <Description>AI-assisted .NET MAUI Hot Reload diagnostics — MCP server, environment validator, per-change confirmation, and bug report generator.</Description>
+    <PackageProjectUrl>https://github.com/davidortinau/hotreload-sentinel</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/davidortinau/hotreload-sentinel</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>maui;hot-reload;diagnostics;mcp;copilot</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\skill\SKILL.md" CopyToOutputDirectory="PreserveNewest" Link="skill\SKILL.md" />
+    <None Include="..\..\templates\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="templates" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+  </ItemGroup>
+
+</Project>
