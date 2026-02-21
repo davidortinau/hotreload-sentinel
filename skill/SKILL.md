@@ -7,19 +7,36 @@ description: AI-assisted .NET MAUI Hot Reload diagnostics. Monitors hot reload s
 
 ## Monitoring Workflow
 
-When a developer asks to "watch hot reload" or "monitor hot reload":
+When a developer asks to "watch hot reload", "monitor hot reload", or any hot-reload related task:
 
-1. Call `hr_diagnose` first to validate the environment
-2. If any issues found, explain and offer to fix
-3. Call `hr_watch_start` to start the background watcher
-4. Call `hr_watch_follow` (with seconds=60) to stream events
-5. When output contains `follow_pending_confirmation=true`:
+### Step 1: Prerequisites Check (ALWAYS do this first)
+
+1. Call `hr_diagnose` to validate the environment
+2. Review results for any `fail` or `warn` status checks
+3. If prerequisites are unmet, report them clearly to the developer:
+   - Missing ENC log directory → explain it must be set before launching the IDE
+   - Missing BOM on .cs files → offer to auto-fix with `hr_diagnose --fix`
+   - Missing MetadataUpdateHandler → offer to scaffold one for their framework
+   - VS Code settings not configured → offer to auto-fix
+4. Ask the developer if they'd like you to fix any auto-fixable issues before proceeding
+5. If critical prerequisites are unmet (no ENC log dir, no Session.log), stop and explain — watching without these will produce no useful data
+
+### Step 2: Start Monitoring
+
+1. Call `hr_watch_start` to start the background watcher
+2. Call `hr_status` to confirm watcher is alive and check heartbeat connectivity
+3. If heartbeat is not detected, warn the developer that app-side diagnostics (HotReloadSentinel.Diagnostics NuGet) may not be installed
+
+### Step 3: Follow and Confirm
+
+1. Call `hr_watch_follow` (with seconds=60) to stream events
+2. When output contains `follow_pending_confirmation=true`:
    - Call `hr_pending_atoms` to get the change atoms
-   - Use `ask_user` to confirm each atom with the developer
-   - Record answers with `hr_record_verdict`
-6. Repeat `hr_watch_follow` to catch more events
-7. When done, call `hr_watch_stop`
-8. If failures were recorded, call `hr_draft_issue` to generate bug reports
+   - For each atom, use `ask_user` to confirm with the developer individually
+   - Record all answers with `hr_record_verdict`
+3. Repeat `hr_watch_follow` to catch more events — do NOT wait for the developer to prompt you
+4. When done, call `hr_watch_stop`
+5. If failures were recorded, offer to call `hr_draft_issue` to generate a bug report
 
 ## Environment Setup Requirements
 
@@ -70,16 +87,17 @@ Usually works without custom handler. If not, check linker settings.
 
 Use these rules when interpreting sentinel output:
 
-| Scenario | Meaning |
-|---|---|
-| ENC applied + heartbeat advanced + visual OK | ✅ Working correctly |
-| ENC applied + heartbeat advanced + visual FAILED | 🐛 MAUI rendering bug |
-| ENC applied + heartbeat NOT advanced | ⚠️ MetadataUpdateHandler missing/broken |
-| ENC blocked | ❌ Compilation error — check error message |
-| `not_applied` on active TFM | ⚠️ Stale build, need rebuild |
-| `not_applied_other_tfm` | ✅ Normal, ignore (multi-TFM project) |
-| `ENC1008` | ❌ Rude edit — restart required |
-| `connection_lost` | ⚠️ Debug session disconnected |
+| Scenario | Meaning | Action |
+|---|---|---|
+| ENC applied + heartbeat advanced + visual OK | Working correctly | Record as passed |
+| ENC applied + heartbeat advanced + visual FAILED | UI framework rendering bug | File bug against MAUI/MauiReactor with diff + heartbeat proof |
+| ENC applied + heartbeat NOT advanced | Delta didn't reach app or handler didn't fire | Check MetadataUpdateHandler registration |
+| ENC applied + no heartbeat endpoint | Can't determine if app received delta | Recommend installing HotReloadSentinel.Diagnostics NuGet |
+| ENC blocked | Compilation error | Show error message from Session.log |
+| `not_applied` on active TFM | Stale build | Recommend rebuild |
+| `not_applied_other_tfm` | Normal multi-TFM noise | Ignore |
+| `ENC1008` | Rude edit | Restart debug session required |
+| `connection_lost` | Debug session disconnected | Restart debug session |
 
 ## Common Failure Patterns
 
