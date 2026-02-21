@@ -16,7 +16,7 @@ Hot Reload Sentinel automates all of it.
 
 ## What It Does
 
-**Diagnose** -- Validates your environment before you start debugging. Checks that the ENC log directory is configured, all `.cs` files are UTF-8 with BOM, your project has the correct `MetadataUpdateHandler` for its UI framework (MauiReactor, C# Markup, Blazor Hybrid, or XAML), and your VS Code settings are correct.
+**Diagnose** -- Validates your environment before you start debugging. Checks that the ENC log directory is configured, all `.cs` files are UTF-8 with BOM, your project has the correct `MetadataUpdateHandler` for its UI framework (MauiReactor, C# Markup, Blazor Hybrid, or XAML), and your IDE settings are correct.
 
 **Monitor** -- Watches `Session.log` and an optional app-side heartbeat endpoint in real-time. Detects new apply events, extracts the specific code changes (what we call "atoms"), and tracks session health as IDLE, ACTIVE, or DEGRADED.
 
@@ -134,7 +134,7 @@ The server runs as a subprocess managed by the Copilot CLI. You do not need to s
 ## How the Confirmation Flow Works
 
 ```
-1. Developer saves a .cs file in VS Code
+1. Developer edits a .cs file and initiates a hot reload
 2. .NET Hot Reload applies the delta (logged in Session.log)
 3. Sentinel detects the apply event and extracts change atoms
 4. Copilot CLI calls hr_pending_atoms, gets a list like:
@@ -197,7 +197,7 @@ Framework detection is automatic based on NuGet references and code analysis.
 
 - .NET 9.0 SDK or later
 - macOS or Windows (Linux support is partial)
-- VS Code with C# Dev Kit, or Visual Studio 2022+
+- VS Code with C# Dev Kit, Visual Studio 2022+, or Visual Studio 2026+
 - The `Microsoft_CodeAnalysis_EditAndContinue_LogDir` environment variable must be set (the `init` command checks this)
 
 ## Building from Source
