@@ -7,9 +7,39 @@ using System.Text.Json;
 /// </summary>
 public static class IdeSettingsChecker
 {
-    public static List<DiagnosticCheck> Run(string projectDir)
+    public static List<DiagnosticCheck> Run(string projectDir, IdeDetectionResult? ide = null)
     {
+        ide ??= IdeDetector.Detect();
         var checks = new List<DiagnosticCheck>();
+        var hasVsCode = ide.HasVsCode;
+        var hasVisualStudio = ide.HasVisualStudio;
+
+        if (!hasVsCode)
+        {
+            checks.Add(new DiagnosticCheck
+            {
+                Id = hasVisualStudio ? "ide_visual_studio" : "ide_supported",
+                Name = "IDE Detection",
+                Status = hasVisualStudio ? CheckStatus.Pass : CheckStatus.Warn,
+                Message = hasVisualStudio
+                    ? "Visual Studio detected. VS Code settings checks are skipped."
+                    : "No supported IDE detected (VS Code or Visual Studio). Continuing without IDE-specific checks.",
+                AutoFixable = false,
+            });
+            return checks;
+        }
+
+        if (hasVisualStudio)
+        {
+            checks.Add(new DiagnosticCheck
+            {
+                Id = "ide_visual_studio",
+                Name = "Visual Studio Guidance",
+                Status = CheckStatus.Pass,
+                Message = "Visual Studio detected. Verify Hot Reload is enabled in Visual Studio debug settings.",
+                AutoFixable = false,
+            });
+        }
 
         // Check VS Code settings
         var vscodeSettings = Path.Combine(projectDir, ".vscode", "settings.json");
@@ -82,10 +112,12 @@ public static class IdeSettingsChecker
             {
                 Id = "vscode_settings",
                 Name = "VS Code Settings",
-                Status = CheckStatus.Warn,
-                Message = "No .vscode/settings.json found. VS Code hot reload settings not configured.",
-                AutoFixable = true,
-                FixCommand = "hotreload-sentinel fix --check vscode_settings",
+                Status = hasVisualStudio ? CheckStatus.Pass : CheckStatus.Warn,
+                Message = hasVisualStudio
+                    ? "No .vscode/settings.json found. This is informational because Visual Studio is also detected."
+                    : "No .vscode/settings.json found. VS Code hot reload settings not configured.",
+                AutoFixable = !hasVisualStudio,
+                FixCommand = hasVisualStudio ? null : "hotreload-sentinel fix --check vscode_settings",
             });
         }
 

@@ -10,7 +10,7 @@ public static class EnvironmentChecker
         var checks = new List<DiagnosticCheck>();
 
         // ENC LogDir
-        var encLogDir = Environment.GetEnvironmentVariable("Microsoft_CodeAnalysis_EditAndContinue_LogDir");
+        var encLogDir = GetConfiguredEnv("Microsoft_CodeAnalysis_EditAndContinue_LogDir");
         checks.Add(new DiagnosticCheck
         {
             Id = "enc_logdir",
@@ -26,14 +26,14 @@ public static class EnvironmentChecker
         });
 
         // XAML Hot Reload logging
-        var xamlLog = Environment.GetEnvironmentVariable("HOTRELOAD_XAML_LOG_MESSAGES");
+        var xamlLog = GetConfiguredEnv("HOTRELOAD_XAML_LOG_MESSAGES");
         checks.Add(new DiagnosticCheck
         {
             Id = "xaml_logging",
             Name = "XAML Hot Reload Logging",
             Status = string.IsNullOrEmpty(xamlLog) ? CheckStatus.Warn : CheckStatus.Pass,
             Message = string.IsNullOrEmpty(xamlLog)
-                ? "HOTRELOAD_XAML_LOG_MESSAGES not set. XAML hot reload diagnostics unavailable."
+                ? "HOTRELOAD_XAML_LOG_MESSAGES not set. VS/VS Code XAML Hot Reload events may not appear in Session.log."
                 : $"Set to: {xamlLog}",
             AutoFixable = true,
             FixCommand = OperatingSystem.IsWindows()
@@ -66,5 +66,22 @@ public static class EnvironmentChecker
         });
 
         return checks;
+    }
+
+    static string? GetConfiguredEnv(string name)
+    {
+        var process = Environment.GetEnvironmentVariable(name);
+        if (!string.IsNullOrEmpty(process))
+            return process;
+
+        if (!OperatingSystem.IsWindows())
+            return null;
+
+        var user = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User);
+        if (!string.IsNullOrEmpty(user))
+            return user;
+
+        var machine = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
+        return string.IsNullOrEmpty(machine) ? null : machine;
     }
 }

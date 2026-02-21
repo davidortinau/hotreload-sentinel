@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HotReloadSentinel.Diagnostics;
 using HotReloadSentinel.IssueGeneration;
 using HotReloadSentinel.Mcp;
@@ -15,7 +16,6 @@ var sessionLogPath = Path.Combine(hotReloadDir, "Session.log");
 var statePath = Path.Combine(tmpDir, "hotreload-sentinel.state.json");
 var pidPath = Path.Combine(tmpDir, "hotreload-sentinel.pid");
 var portGlob = platformIsWindows ? "hotreload-diag-*.port" : "hotreload-diag-*.port";
-var watchLogPath = Path.Combine(tmpDir, "hotreload-sentinel.watch.log");
 
 var store = new VerdictStore(statePath);
 
@@ -46,7 +46,6 @@ watchStartCmd.SetHandler(() =>
         RedirectStandardError = true,
     };
 
-    using var logFile = File.Open(watchLogPath, FileMode.Append, FileAccess.Write, FileShare.Read);
     var proc = Process.Start(psi);
     if (proc is not null)
     {
@@ -89,6 +88,7 @@ statusCmd.SetHandler(() =>
     var status = WatchLoop.ComputeStatus(state);
     Console.WriteLine($"hr_status: {status}");
     Console.WriteLine($"watcher_alive={state.WatcherAlive} last_heartbeat={state.LastHeartbeatTs} last_log_activity={state.LastLogActivityTs} selected_endpoint={state.SelectedEndpoint}");
+    Console.WriteLine($"counts apply={state.ApplyCount} xaml_apply={state.XamlApplyCount} xaml_change={state.XamlChangeCount} xaml_cs_change={state.XamlCodeBehindChangeCount}");
 });
 rootCommand.AddCommand(statusCmd);
 
@@ -103,7 +103,7 @@ diagnoseCmd.SetHandler((string? projDir) =>
     var status = WatchLoop.ComputeStatus(state);
 
     Console.WriteLine($"hr_diagnose: status={status}");
-    Console.WriteLine($"summary save_count={state.SaveCount} apply_count={state.ApplyCount} result_success={state.ResultSuccessCount} result_failure={state.ResultFailureCount} not_applied={state.NotAppliedCount} not_applied_other_tfm={state.NotAppliedOtherTfmCount} enc1008={state.Enc1008Count} app_heartbeat_recent={state.HeartbeatOk} heartbeat_update_count={state.LastHeartbeatUpdateCount}");
+    Console.WriteLine($"summary save_count={state.SaveCount} apply_count={state.ApplyCount} xaml_change_count={state.XamlChangeCount} xaml_cs_change_count={state.XamlCodeBehindChangeCount} xaml_apply_count={state.XamlApplyCount} result_success={state.ResultSuccessCount} result_failure={state.ResultFailureCount} not_applied={state.NotAppliedCount} not_applied_other_tfm={state.NotAppliedOtherTfmCount} enc1008={state.Enc1008Count} app_heartbeat_recent={state.HeartbeatOk} heartbeat_update_count={state.LastHeartbeatUpdateCount}");
 
     // Run all diagnostic checks
     var checks = new List<DiagnosticCheck>();
@@ -210,6 +210,7 @@ watchFollowCmd.SetHandler(async (int seconds, int interval, bool noConfirm) =>
     }
 
     int prevApply = -1;
+    int prevXamlApply = -1;
     string prevStatus = "";
     double? prevArtifactMtime = ArtifactDiffer.FindLatest(hotReloadDir)?.Mtime;
 
@@ -222,9 +223,10 @@ watchFollowCmd.SetHandler(async (int seconds, int interval, bool noConfirm) =>
         state.WatcherAlive = pid > 0 && IsProcessAlive(pid);
         var status = WatchLoop.ComputeStatus(state);
         var applyCount = state.ApplyCount;
+        var xamlApplyCount = state.XamlApplyCount;
 
-        if (status != prevStatus || applyCount != prevApply)
-            Console.WriteLine($"follow status={status} apply_count={applyCount} heartbeat_update_count={state.LastHeartbeatUpdateCount} selected_pid={state.SelectedPid}");
+        if (status != prevStatus || applyCount != prevApply || xamlApplyCount != prevXamlApply)
+            Console.WriteLine($"follow status={status} apply_count={applyCount} xaml_apply_count={xamlApplyCount} xaml_cs_change_count={state.XamlCodeBehindChangeCount} heartbeat_update_count={state.LastHeartbeatUpdateCount} selected_pid={state.SelectedPid}");
 
         if (applyCount > prevApply && prevApply >= 0)
         {
@@ -232,49 +234,56 @@ watchFollowCmd.SetHandler(async (int seconds, int interval, bool noConfirm) =>
             Console.WriteLine(hbOk
                 ? "follow_hint=Hot Reload apply observed and heartbeat advanced (likely successful)."
                 : "follow_hint=Hot Reload apply observed but heartbeat did not advance (possible failure/stale process).");
+        }
 
-            var artifact = ArtifactDiffer.FindLatest(hotReloadDir, prevArtifactMtime);
-            if (artifact is not null)
+        var artifact = ArtifactDiffer.FindLatest(hotReloadDir, prevArtifactMtime);
+        if (artifact is not null)
+        {
+            prevArtifactMtime = artifact.Mtime;
+            Console.WriteLine($"follow_change_file={artifact.SourceFile}");
+            var preview = ArtifactDiffer.GenerateDiffPreview(artifact.OldPath, artifact.NewPath);
+            Console.WriteLine($"follow_change_preview={preview}");
+
+            var atoms = ChangeAtomExtractor.Extract(artifact.OldPath, artifact.NewPath);
+            var artifactName = artifact.Name;
+            var eventIndex = applyCount + xamlApplyCount;
+
+            if (atoms.Count > 0)
             {
-                prevArtifactMtime = artifact.Mtime;
-                Console.WriteLine($"follow_change_file={artifact.SourceFile}");
-                var preview = ArtifactDiffer.GenerateDiffPreview(artifact.OldPath, artifact.NewPath);
-                Console.WriteLine($"follow_change_preview={preview}");
-
-                var atoms = ChangeAtomExtractor.Extract(artifact.OldPath, artifact.NewPath);
-                var artifactName = artifact.Name;
-
-                if (atoms.Count > 0)
+                Console.WriteLine($"follow_atoms_count={atoms.Count}");
+                for (int ai = 0; ai < atoms.Count; ai++)
                 {
-                    Console.WriteLine($"follow_atoms_count={atoms.Count}");
-                    for (int ai = 0; ai < atoms.Count; ai++)
-                    {
-                        var atom = atoms[ai];
-                        Console.WriteLine($"follow_atom[{ai}]={atom.ChangeSummary} | control={atom.ControlHint} | {atom.File}:{atom.LineHint}");
-                    }
-                    Console.WriteLine($"follow_pending_confirmation=true apply_index={applyCount}");
-
-                    // Store unconfirmed verdict
-                    var entry = new VerdictEntry
-                    {
-                        ApplyIndex = applyCount,
-                        ArtifactPair = artifactName,
-                        Verdict = null,
-                        Atoms = atoms.Select(a => new AtomInfo
-                        {
-                            Kind = a.Kind.ToString().ToLower(),
-                            ControlHint = a.ControlHint,
-                            ChangeSummary = a.ChangeSummary,
-                            File = a.File,
-                            LineHint = a.LineHint,
-                        }).ToList(),
-                    };
-                    store.AppendVerdict(entry);
+                    var atom = atoms[ai];
+                    Console.WriteLine($"follow_atom[{ai}]={atom.ChangeSummary} | control={atom.ControlHint} | {atom.File}:{atom.LineHint}");
                 }
+                Console.WriteLine($"follow_pending_confirmation=true apply_index={eventIndex}");
+
+                // Store unconfirmed verdict
+                var entry = new VerdictEntry
+                {
+                    ApplyIndex = eventIndex,
+                    ArtifactPair = artifactName,
+                    Verdict = null,
+                    Atoms = atoms.Select(a => new AtomInfo
+                    {
+                        Kind = a.Kind.ToString().ToLower(),
+                        ControlHint = a.ControlHint,
+                        ChangeSummary = a.ChangeSummary,
+                        File = a.File,
+                        LineHint = a.LineHint,
+                    }).ToList(),
+                };
+                store.AppendVerdict(entry);
             }
         }
 
+        if (xamlApplyCount > prevXamlApply && prevXamlApply >= 0)
+        {
+            Console.WriteLine("follow_hint_xaml=XAML Hot Reload apply observed from logs/artifacts.");
+        }
+
         prevApply = applyCount;
+        prevXamlApply = xamlApplyCount;
         prevStatus = status;
 
         await Task.Delay(interval * 1000);
@@ -374,43 +383,112 @@ initCmd.SetHandler(() =>
 {
     Console.WriteLine("hotreload-sentinel init");
 
-    // Add to mcp.json
-    var mcpJsonPath = Path.Combine(
+    var copilotDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".copilot", "mcp.json");
+        ".copilot");
 
-    Console.WriteLine($"  MCP config: {mcpJsonPath}");
-    Console.WriteLine("  To add manually, include in your mcp.json:");
-    Console.WriteLine("""
-    "hotreload-sentinel": {
-      "command": "hotreload-sentinel",
-      "args": ["mcp"]
+    // Register MCP server in ~/.copilot/mcp-config.json
+    var mcpConfigPath = Path.Combine(copilotDir, "mcp-config.json");
+
+    try
+    {
+        Directory.CreateDirectory(copilotDir);
+
+        JsonObject mcpConfig;
+        if (File.Exists(mcpConfigPath))
+        {
+            var existing = File.ReadAllText(mcpConfigPath);
+            mcpConfig = JsonNode.Parse(existing)?.AsObject() ?? new JsonObject();
+        }
+        else
+        {
+            mcpConfig = new JsonObject();
+        }
+
+        if (mcpConfig["mcpServers"] is not JsonObject servers)
+        {
+            servers = new JsonObject();
+            mcpConfig["mcpServers"] = servers;
+        }
+
+        servers["hotreload-sentinel"] = new JsonObject
+        {
+            ["command"] = "hotreload-sentinel",
+            ["args"] = new JsonArray("mcp"),
+            ["tools"] = new JsonArray("*"),
+        };
+
+        var writeOptions = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(mcpConfigPath, mcpConfig.ToJsonString(writeOptions));
+        Console.WriteLine($"  ✅ MCP server registered in {mcpConfigPath}");
+
+        // Backward-compat: also write installed-plugins .mcp.json when possible
+        var pluginDir = Path.Combine(copilotDir, "installed-plugins", "hotreload-sentinel", "hotreload-sentinel");
+        var pluginMcpJsonPath = Path.Combine(pluginDir, ".mcp.json");
+        Directory.CreateDirectory(pluginDir);
+        File.WriteAllText(pluginMcpJsonPath, new JsonObject { ["mcpServers"] = new JsonObject { ["hotreload-sentinel"] = servers["hotreload-sentinel"]?.DeepClone() } }.ToJsonString(writeOptions));
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  ⚠️  Could not write {mcpConfigPath}: {ex.Message}");
+        Console.WriteLine("  To add manually, create mcp-config.json in:");
+        Console.WriteLine($"    {copilotDir}");
+        Console.WriteLine("""
+    {
+      "mcpServers": {
+        "hotreload-sentinel": {
+          "command": "hotreload-sentinel",
+          "args": ["mcp"],
+          "tools": ["*"]
+        }
+      }
     }
     """);
+    }
 
-    // Copy skill
-    var skillDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".copilot", "skills", "hotreload-sentinel");
+    // Install skill into the standard user skills directory
+    var skillDir = Path.Combine(copilotDir, "skills", "hotreload-sentinel");
     var bundledSkill = Path.Combine(AppContext.BaseDirectory, "skill", "SKILL.md");
 
     if (File.Exists(bundledSkill))
     {
         Directory.CreateDirectory(skillDir);
         File.Copy(bundledSkill, Path.Combine(skillDir, "SKILL.md"), overwrite: true);
-        Console.WriteLine($"  Skill installed to: {skillDir}");
+        Console.WriteLine($"  ✅ Skill installed to: {skillDir}");
     }
     else
     {
-        Console.WriteLine("  Skill file not found in bundle; skipping.");
+        Console.WriteLine("  ⚠️  Skill file not found in bundle; skipping.");
     }
 
+    // Migrate: clean up old locations from previous versions
+    MigrateOldConfig(copilotDir);
+
     // Check env vars
-    var encLogDir = Environment.GetEnvironmentVariable("Microsoft_CodeAnalysis_EditAndContinue_LogDir");
+    var encLogDir = GetConfiguredEnv("Microsoft_CodeAnalysis_EditAndContinue_LogDir");
     if (string.IsNullOrEmpty(encLogDir))
-        Console.WriteLine("  ⚠️  ENC LogDir not set. Run: export Microsoft_CodeAnalysis_EditAndContinue_LogDir=/tmp/HotReloadLog");
+    {
+        var setCmd = OperatingSystem.IsWindows()
+            ? "setx Microsoft_CodeAnalysis_EditAndContinue_LogDir \"%temp%\\HotReloadLog\""
+            : "export Microsoft_CodeAnalysis_EditAndContinue_LogDir=/tmp/HotReloadLog";
+        Console.WriteLine($"  ⚠️  ENC LogDir not set. Run: {setCmd}");
+    }
     else
         Console.WriteLine($"  ✅ ENC LogDir: {encLogDir}");
+
+    var ide = IdeDetector.Detect();
+    if (ide.HasVisualStudio)
+    {
+        Console.WriteLine("  ✅ Visual Studio detected. In Visual Studio, verify Hot Reload is enabled in your Debug settings.");
+    }
+    if (ide.HasVsCode)
+    {
+        Console.WriteLine("  ✅ VS Code detected. For best diagnostics, ensure .vscode/settings.json enables hot reload on save and detailed verbosity.");
+    }
+    if (!ide.HasVisualStudio && !ide.HasVsCode)
+    {
+        Console.WriteLine("  ⚠️  No supported IDE detected (VS Code or Visual Studio). Setup completed, but IDE-specific guidance is limited.");
+    }
 
     Console.WriteLine("  Done. Restart Copilot CLI to activate MCP tools.");
 });
@@ -420,7 +498,7 @@ rootCommand.AddCommand(initCmd);
 var watchRunCmd = new Command("_watch-run", "Internal: background watcher daemon.") { IsHidden = true };
 watchRunCmd.SetHandler(async () =>
 {
-    var loop = new WatchLoop(sessionLogPath, Path.Combine(tmpDir, portGlob), hotReloadDir, store);
+    var loop = new WatchLoop(sessionLogPath, Path.Combine(tmpDir, portGlob), store);
     File.WriteAllText(pidPath, Environment.ProcessId.ToString());
     try
     {
@@ -439,4 +517,52 @@ static bool IsProcessAlive(int pid)
 {
     try { Process.GetProcessById(pid); return true; }
     catch { return false; }
+}
+
+static string? GetConfiguredEnv(string name)
+{
+    var process = Environment.GetEnvironmentVariable(name);
+    if (!string.IsNullOrEmpty(process))
+        return process;
+
+    if (!OperatingSystem.IsWindows())
+        return null;
+
+    var user = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User);
+    if (!string.IsNullOrEmpty(user))
+        return user;
+
+    var machine = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
+    return string.IsNullOrEmpty(machine) ? null : machine;
+}
+
+static void MigrateOldConfig(string copilotDir)
+{
+    // Remove hotreload-sentinel entry from old ~/.copilot/mcp.json if present
+    var oldMcpJson = Path.Combine(copilotDir, "mcp.json");
+    try
+    {
+        if (File.Exists(oldMcpJson))
+        {
+            var content = File.ReadAllText(oldMcpJson);
+            var obj = JsonNode.Parse(content)?.AsObject();
+            var servers = obj?["servers"]?.AsObject();
+            if (servers?.ContainsKey("hotreload-sentinel") == true)
+            {
+                servers.Remove("hotreload-sentinel");
+                if (servers.Count == 0)
+                    obj!.Remove("servers");
+
+                if (obj!.Count == 0)
+                    File.Delete(oldMcpJson);
+                else
+                    File.WriteAllText(oldMcpJson, obj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+                Console.WriteLine($"  🔄 Migrated: removed old entry from {oldMcpJson}");
+            }
+        }
+    }
+    catch { /* best-effort migration */ }
+
+    // Keep ~/.copilot/skills/hotreload-sentinel as the current skill location.
 }

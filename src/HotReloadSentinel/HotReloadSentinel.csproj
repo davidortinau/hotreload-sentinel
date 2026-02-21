@@ -11,7 +11,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>hotreload-sentinel</ToolCommandName>
     <PackageId>HotReloadSentinel</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>David Ortinau</Authors>
     <Description>AI-assisted .NET MAUI Hot Reload diagnostics — MCP server, environment validator, per-change confirmation, and bug report generator.</Description>
     <PackageProjectUrl>https://github.com/davidortinau/hotreload-sentinel</PackageProjectUrl>

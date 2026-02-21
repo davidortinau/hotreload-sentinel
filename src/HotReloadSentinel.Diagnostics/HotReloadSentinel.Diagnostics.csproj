@@ -7,7 +7,7 @@
     <RootNamespace>HotReloadSentinel.Diagnostics</RootNamespace>
 
     <PackageId>HotReloadSentinel.Diagnostics</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>David Ortinau</Authors>
     <Description>App-side hot reload diagnostics for .NET MAUI — heartbeat endpoint, update counter, and port file writer. Use with the hotreload-sentinel CLI tool.</Description>
     <PackageProjectUrl>https://github.com/davidortinau/hotreload-sentinel</PackageProjectUrl>

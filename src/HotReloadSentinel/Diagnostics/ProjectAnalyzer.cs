@@ -67,6 +67,10 @@ public static class ProjectAnalyzer
             AutoFixable = false,
         });
 
+        // Check app-side diagnostics package + MauiProgram wiring.
+        checks.Add(CheckDiagnosticsPackage(csprojContent));
+        checks.Add(CheckMauiProgramWiring(projectDir));
+
         // Check MetadataUpdateHandler
         var handlerCheck = CheckMetadataUpdateHandler(projectDir, framework);
         checks.Add(handlerCheck);
@@ -189,6 +193,71 @@ public static class ProjectAnalyzer
                 : "No custom MetadataUpdateHandler (not required for XAML apps).",
             AutoFixable = required,
             FixCommand = required ? $"hotreload-sentinel fix --check metadata_handler" : null,
+        };
+    }
+
+    static DiagnosticCheck CheckDiagnosticsPackage(string csprojContent)
+    {
+        var hasPackage = csprojContent.Contains("HotReloadSentinel.Diagnostics", StringComparison.Ordinal);
+        return new DiagnosticCheck
+        {
+            Id = "diagnostics_package",
+            Name = "HotReloadSentinel.Diagnostics Package",
+            Status = hasPackage ? CheckStatus.Pass : CheckStatus.Fail,
+            Message = hasPackage
+                ? "HotReloadSentinel.Diagnostics package reference found."
+                : "HotReloadSentinel.Diagnostics package reference is missing.",
+            AutoFixable = false,
+            FixCommand = hasPackage ? null : "dotnet add package HotReloadSentinel.Diagnostics",
+        };
+    }
+
+    static DiagnosticCheck CheckMauiProgramWiring(string projectDir)
+    {
+        if (!Directory.Exists(projectDir))
+        {
+            return new DiagnosticCheck
+            {
+                Id = "diagnostics_wiring",
+                Name = "MauiProgram Diagnostics Wiring",
+                Status = CheckStatus.Warn,
+                Message = "Project directory not found. Could not verify MauiProgram wiring.",
+                AutoFixable = false,
+            };
+        }
+
+        var mauiProgram = Directory.EnumerateFiles(projectDir, "MauiProgram.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            .FirstOrDefault();
+
+        if (mauiProgram is null)
+        {
+            return new DiagnosticCheck
+            {
+                Id = "diagnostics_wiring",
+                Name = "MauiProgram Diagnostics Wiring",
+                Status = CheckStatus.Warn,
+                Message = "MauiProgram.cs not found. Could not verify UseHotReloadDiagnostics wiring.",
+                AutoFixable = false,
+            };
+        }
+
+        var content = File.ReadAllText(mauiProgram);
+        var hasWiring = content.Contains("UseHotReloadDiagnostics(", StringComparison.Ordinal);
+        return new DiagnosticCheck
+        {
+            Id = "diagnostics_wiring",
+            Name = "MauiProgram Diagnostics Wiring",
+            Status = hasWiring ? CheckStatus.Pass : CheckStatus.Fail,
+            Message = hasWiring
+                ? "UseHotReloadDiagnostics wiring found in MauiProgram.cs."
+                : "UseHotReloadDiagnostics wiring is missing in MauiProgram.cs.",
+            AutoFixable = false,
+            FixCommand = hasWiring
+                ? null
+                : "In MauiProgram.cs add `using HotReloadSentinel.Diagnostics;` and call `builder.UseHotReloadDiagnostics();` inside `#if DEBUG`.",
+            AffectedFiles = [mauiProgram],
         };
     }
 }

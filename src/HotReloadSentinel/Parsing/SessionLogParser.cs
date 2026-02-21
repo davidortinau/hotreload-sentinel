@@ -10,6 +10,9 @@ public sealed class SessionLogParser
     // Patterns from Session.log
     static readonly Regex SavePattern = new(@"Found \d+ potentially changed", RegexOptions.Compiled);
     static readonly Regex ApplyPattern = new(@"Solution update \d+\.\d+ status:\s*(Ready|ManagedModuleUpdate)", RegexOptions.Compiled);
+    static readonly Regex XamlCodeBehindChangePattern = new(@"Document changed, added, or deleted:\s*'.*\.xaml\.cs'", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    static readonly Regex XamlChangePattern = new(@"Document changed, added, or deleted:\s*'.*\.xaml'", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    static readonly Regex XamlApplyPattern = new(@"(XAML.*Hot Reload|Hot Reload.*XAML).*(applied|apply|updated|update)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     static readonly Regex Enc1008Pattern = new(@"ENC1008", RegexOptions.Compiled);
     static readonly Regex NotAppliedPattern = new(@"Changes not applied.*project not built", RegexOptions.Compiled);
     static readonly Regex NotAppliedOtherTfmPattern = new(@"Changes not applied.*not built", RegexOptions.Compiled);
@@ -39,6 +42,15 @@ public sealed class SessionLogParser
 
             if (ApplyPattern.IsMatch(line))
                 markers.ApplyCount++;
+
+            if (XamlCodeBehindChangePattern.IsMatch(line))
+                markers.XamlCodeBehindChangeCount++;
+
+            if (XamlChangePattern.IsMatch(line))
+                markers.XamlChangeCount++;
+
+            if (XamlApplyPattern.IsMatch(line))
+                markers.XamlApplyCount++;
 
             if (Enc1008Pattern.IsMatch(line))
                 markers.Enc1008Count++;
@@ -77,6 +89,9 @@ public sealed class LogMarkers
 {
     public int SaveCount { get; set; }
     public int ApplyCount { get; set; }
+    public int XamlCodeBehindChangeCount { get; set; }
+    public int XamlChangeCount { get; set; }
+    public int XamlApplyCount { get; set; }
     public int Enc1008Count { get; set; }
     public int ResultSuccessCount { get; set; }
     public int ResultFailureCount { get; set; }

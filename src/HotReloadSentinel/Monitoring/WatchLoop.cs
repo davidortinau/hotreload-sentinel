@@ -10,15 +10,13 @@ public sealed class WatchLoop
 {
     readonly string _sessionLogPath;
     readonly string _portGlob;
-    readonly string _hotReloadDir;
     readonly VerdictStore _store;
     readonly SessionLogParser _parser = new();
 
-    public WatchLoop(string sessionLogPath, string portGlob, string hotReloadDir, VerdictStore store)
+    public WatchLoop(string sessionLogPath, string portGlob, VerdictStore store)
     {
         _sessionLogPath = sessionLogPath;
         _portGlob = portGlob;
-        _hotReloadDir = hotReloadDir;
         _store = store;
     }
 
@@ -57,6 +55,9 @@ public sealed class WatchLoop
                     state.LastLogActivityTs = now;
                     state.SaveCount += markers.SaveCount;
                     state.ApplyCount += markers.ApplyCount;
+                    state.XamlCodeBehindChangeCount += markers.XamlCodeBehindChangeCount;
+                    state.XamlChangeCount += markers.XamlChangeCount;
+                    state.XamlApplyCount += markers.XamlApplyCount;
                     state.Enc1008Count += markers.Enc1008Count;
                     state.ResultSuccessCount += markers.ResultSuccessCount;
                     state.ResultFailureCount += markers.ResultFailureCount;

@@ -8,15 +8,16 @@ using System.Text.Json.Nodes;
 /// </summary>
 public static class AutoFixer
 {
-    public static (bool success, string message) Fix(string checkId, string projectDir)
+    public static (bool success, string message) Fix(string checkId, string projectDir, IdeDetectionResult? ide = null)
     {
+        ide ??= IdeDetector.Detect();
         return checkId switch
         {
             "bom_encoding" => FixBomEncoding(projectDir),
             "metadata_handler" => FixMetadataHandler(projectDir),
-            "vscode_verbosity" => FixVsCodeSetting(projectDir, "csharp.debug.hotReloadVerbosity", "detailed"),
-            "vscode_on_save" => FixVsCodeSetting(projectDir, "csharp.debug.hotReloadOnSave", true),
-            "vscode_settings" => FixVsCodeSettings(projectDir),
+            "vscode_verbosity" => FixVsCodeSetting(projectDir, "csharp.debug.hotReloadVerbosity", "detailed", ide),
+            "vscode_on_save" => FixVsCodeSetting(projectDir, "csharp.debug.hotReloadOnSave", true, ide),
+            "vscode_settings" => FixVsCodeSettings(projectDir, ide),
             _ => (false, $"No auto-fix available for check: {checkId}")
         };
     }
@@ -87,8 +88,11 @@ public static class AutoFixer
         return (true, $"Generated HotReloadService.cs for {framework} at {destPath}");
     }
 
-    static (bool, string) FixVsCodeSetting(string projectDir, string key, object value)
+    static (bool, string) FixVsCodeSetting(string projectDir, string key, object value, IdeDetectionResult ide)
     {
+        if (!ide.HasVsCode)
+            return (false, "VS Code was not detected. Skipping VS Code settings auto-fix. If you use Visual Studio, configure Hot Reload in Visual Studio settings.");
+
         var settingsPath = Path.Combine(projectDir, ".vscode", "settings.json");
         var dir = Path.GetDirectoryName(settingsPath)!;
         Directory.CreateDirectory(dir);
@@ -121,8 +125,11 @@ public static class AutoFixer
         return (true, $"Set {key} in {settingsPath}");
     }
 
-    static (bool, string) FixVsCodeSettings(string projectDir)
+    static (bool, string) FixVsCodeSettings(string projectDir, IdeDetectionResult ide)
     {
+        if (!ide.HasVsCode)
+            return (false, "VS Code was not detected. Skipping VS Code settings auto-fix. If you use Visual Studio, configure Hot Reload in Visual Studio settings.");
+
         var settingsPath = Path.Combine(projectDir, ".vscode", "settings.json");
         Directory.CreateDirectory(Path.Combine(projectDir, ".vscode"));
 

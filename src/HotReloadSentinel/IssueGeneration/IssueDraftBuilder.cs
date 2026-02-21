@@ -30,7 +30,7 @@ public static class IssueDraftBuilder
         // Detect framework from artifact name
         var framework = verdict.ArtifactPair.Contains("Reactor") ? "MauiReactor (MVU)" : "XAML/MVVM";
         sb.AppendLine($"- UI Framework: {framework}");
-        sb.AppendLine("- Tool: .NET MAUI Hot Reload (VS Code C# Dev Kit)");
+        sb.AppendLine("- Tool: .NET MAUI Hot Reload (Visual Studio / VS Code)");
         sb.AppendLine();
 
         sb.AppendLine("## Summary");
@@ -111,7 +111,7 @@ public static class IssueDraftBuilder
         sb.AppendLine();
         sb.AppendLine("## Environment");
         sb.AppendLine("- Platform: Mac Catalyst (`net10.0-maccatalyst`)");
-        sb.AppendLine("- Tool: .NET MAUI Hot Reload (VS Code C# Dev Kit)");
+        sb.AppendLine("- Tool: .NET MAUI Hot Reload (Visual Studio / VS Code)");
         sb.AppendLine();
         sb.AppendLine("## Summary");
         sb.AppendLine("All hot reload changes during this session were applied successfully with visual confirmation.");

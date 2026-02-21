@@ -58,4 +58,46 @@ public class SessionLogParserTests
 
         File.Delete(tmpFile);
     }
+
+    [Fact]
+    public void DetectsXamlDocumentChange()
+    {
+        var tmpFile = Path.GetTempFileName();
+        File.WriteAllText(tmpFile, "Document changed, added, or deleted: 'D:\\TestHotness\\MainPage.xaml'\n");
+
+        var parser = new SessionLogParser();
+        var markers = parser.Parse(tmpFile);
+
+        Assert.Equal(1, markers.XamlChangeCount);
+        Assert.Equal(0, markers.XamlCodeBehindChangeCount);
+        Assert.Equal(0, markers.XamlApplyCount);
+        File.Delete(tmpFile);
+    }
+
+    [Fact]
+    public void DetectsXamlCodeBehindChangeSeparately()
+    {
+        var tmpFile = Path.GetTempFileName();
+        File.WriteAllText(tmpFile, "Document changed, added, or deleted: 'D:\\TestHotness\\MainPage.xaml.cs'\n");
+
+        var parser = new SessionLogParser();
+        var markers = parser.Parse(tmpFile);
+
+        Assert.Equal(1, markers.XamlCodeBehindChangeCount);
+        Assert.Equal(0, markers.XamlChangeCount);
+        File.Delete(tmpFile);
+    }
+
+    [Fact]
+    public void DetectsXamlApplyLine()
+    {
+        var tmpFile = Path.GetTempFileName();
+        File.WriteAllText(tmpFile, "XAML Hot Reload update applied to MainPage.xaml\n");
+
+        var parser = new SessionLogParser();
+        var markers = parser.Parse(tmpFile);
+
+        Assert.Equal(1, markers.XamlApplyCount);
+        File.Delete(tmpFile);
+    }
 }

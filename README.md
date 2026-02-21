@@ -26,7 +26,7 @@ Hot Reload Sentinel automates all of it.
 
 ## What It Does
 
-**Diagnose** -- Validates your environment before you start debugging. Checks that the ENC log directory is configured, all `.cs` files are UTF-8 with BOM, your project has the correct `MetadataUpdateHandler` for its UI framework (MauiReactor, C# Markup, Blazor Hybrid, or XAML), and your IDE settings are correct.
+**Diagnose** -- Validates your environment before you start debugging. Checks that the ENC log directory is configured, all `.cs` files are UTF-8 with BOM, your project has the correct `MetadataUpdateHandler` for its UI framework (MauiReactor, C# Markup, Blazor Hybrid, or XAML), `HotReloadSentinel.Diagnostics` package + `MauiProgram.cs` wiring are present, and your IDE settings are correct.
 
 **Monitor** -- Watches `Session.log` and an app-side heartbeat endpoint in real-time. Detects new apply events, extracts the specific code changes (what we call "atoms"), and tracks session health as IDLE, ACTIVE, or DEGRADED. The heartbeat confirms that the app actually received each delta and its update handler fired -- critical for isolating where a failure occurred.
 
@@ -56,7 +56,7 @@ hotreload-sentinel init
 
 This does three things:
 
-1. Adds the MCP server configuration to `~/.copilot/mcp-config.json`
+1. Registers the MCP server in `~/.copilot/mcp-config.json` (`%USERPROFILE%\.copilot\mcp-config.json` on Windows)
 2. Installs the Copilot skill to `~/.copilot/skills/hotreload-sentinel/`
 3. Validates your environment and reports anything that needs attention
 
@@ -119,7 +119,7 @@ Returns structured JSON with pass/warn/fail results for every check:
 ```json
 {
   "environment": {
-    "encLogDir": { "status": "pass", "detail": "/tmp/HotReloadLog" },
+    "encLogDir": { "status": "pass", "detail": "/tmp/HotReloadLog (macOS/Linux) or %TEMP%\\HotReloadLog (Windows)" },
     "sessionLog": { "status": "pass", "detail": "Last modified 12s ago" }
   },
   "encoding": {
@@ -158,7 +158,7 @@ The `fix` command (and the `hr_diagnose` MCP tool with `--fix`) can automaticall
 
 - Add UTF-8 BOM to `.cs` files missing it
 - Scaffold a `MetadataUpdateHandler` appropriate for your UI framework
-- Configure VS Code Hot Reload settings
+- Configure VS Code Hot Reload settings (when using VS Code)
 
 ```
 hotreload-sentinel fix --project-dir ./src/MyApp
@@ -166,7 +166,7 @@ hotreload-sentinel fix --project-dir ./src/MyApp
 
 ## MCP Server
 
-The MCP server exposes 9 tools over stdio JSON-RPC, compatible with the protocol version `2025-06-18` used by GitHub Copilot CLI.
+The MCP server exposes 9 tools over stdio JSON-RPC, compatible with MCP protocol versions `2024-11-05` through `2025-06-18` used by GitHub Copilot CLI.
 
 | Tool | Purpose |
 |------|---------|

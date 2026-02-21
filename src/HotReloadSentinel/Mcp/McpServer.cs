@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 using HotReloadSentinel.Verdicts;
 
 /// <summary>
-/// Stdio JSON-RPC MCP server implementing protocol v2025-06-18.
+/// Stdio JSON-RPC MCP server implementing MCP protocol.
 /// Dispatches tool calls to sentinel commands via subprocess.
 /// </summary>
 public sealed class McpServer
@@ -20,10 +20,13 @@ public sealed class McpServer
         _store = store;
     }
 
-    public async Task RunAsync(CancellationToken ct)
+    public Task RunAsync(CancellationToken ct)
     {
-        var input = Console.OpenStandardInput();
-        var output = Console.OpenStandardOutput();
+        return RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(), ct);
+    }
+
+    public async Task RunAsync(Stream input, Stream output, CancellationToken ct)
+    {
         var transport = new McpTransport(input, output);
 
         while (!ct.IsCancellationRequested)
@@ -50,7 +53,7 @@ public sealed class McpServer
         {
             return method switch
             {
-                "initialize" => MakeOk(id, BuildInitResult()),
+                "initialize" => MakeOk(id, BuildInitResult(paramsEl)),
                 "initialized" or "ping" => MakeOk(id, JsonSerializer.SerializeToElement(new { })),
                 "tools/list" => MakeOk(id, JsonSerializer.SerializeToElement(new { tools = Tools.ToolList })),
                 "tools/call" => MakeOk(id, HandleToolCall(paramsEl)),
@@ -70,7 +73,7 @@ public sealed class McpServer
 
         var result = name switch
         {
-            "hr_watch_start" => WrapText(RunCommand("watch-start")),
+            "hr_watch_start" => StartWatcher(),
             "hr_watch_stop" => WrapText(RunCommand("watch-stop")),
             "hr_status" => WrapText(RunCommand("status")),
             "hr_diagnose" => WrapText(RunCommand("diagnose")),
@@ -83,6 +86,22 @@ public sealed class McpServer
         };
 
         return result;
+    }
+
+    JsonElement StartWatcher()
+    {
+        // Start watch-start without stdio redirection to avoid blocking when watch-start
+        // itself launches a long-running child process.
+        var psi = new ProcessStartInfo(_selfPath)
+        {
+            UseShellExecute = true,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+        };
+        psi.ArgumentList.Add("watch-start");
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start watch-start process");
+        return WrapText("hr_watch_start: requested");
     }
 
     string RunCommand(string command, string[]? extraArgs = null)
@@ -100,9 +119,26 @@ public sealed class McpServer
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start process");
-        var stdout = proc.StandardOutput.ReadToEnd();
-        proc.WaitForExit(TimeSpan.FromSeconds(30));
-        return stdout.Trim();
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+
+        if (!proc.WaitForExit(15000))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException($"Command '{command}' timed out after 15s.");
+        }
+
+        Task.WaitAll(stdoutTask, stderrTask);
+        var stdout = stdoutTask.Result.Trim();
+        var stderr = stderrTask.Result.Trim();
+
+        if (proc.ExitCode != 0)
+        {
+            var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+            throw new InvalidOperationException($"Command '{command}' failed (exit={proc.ExitCode}). {detail}".Trim());
+        }
+
+        return stdout;
     }
 
     JsonElement RunWatchFollow(JsonElement arguments)
@@ -184,18 +220,34 @@ public sealed class McpServer
         return $"hr_report: status={state.Status} hints={string.Join("; ", hints)}";
     }
 
-    static JsonElement BuildInitResult()
+    static readonly HashSet<string> SupportedVersions = new(StringComparer.Ordinal)
     {
+        "2024-11-05", "2025-03-26", "2025-06-18"
+    };
+
+    const string DefaultProtocolVersion = "2024-11-05";
+
+    static JsonElement BuildInitResult(JsonElement paramsEl)
+    {
+        // Negotiate protocol version: use the client's version if we support it
+        var clientVersion = DefaultProtocolVersion;
+        if (paramsEl.ValueKind != JsonValueKind.Undefined
+            && paramsEl.TryGetProperty("protocolVersion", out var vEl)
+            && vEl.GetString() is string v)
+        {
+            clientVersion = SupportedVersions.Contains(v) ? v : DefaultProtocolVersion;
+        }
+
         return JsonSerializer.SerializeToElement(new
         {
-            protocolVersion = "2025-06-18",
+            protocolVersion = clientVersion,
             capabilities = new
             {
                 tools = new { listChanged = false },
                 prompts = new { listChanged = false },
                 resources = new { listChanged = false, subscribe = false },
             },
-            serverInfo = new { name = "hotreload-sentinel", version = "0.1.0" },
+            serverInfo = new { name = "hotreload-sentinel", version = "0.1.1" },
         });
     }
 

@@ -5,6 +5,22 @@ description: AI-assisted .NET MAUI Hot Reload diagnostics. Monitors hot reload s
 
 # Hot Reload Sentinel — Copilot Skill
 
+## Project Setup Workflow (when asked to "set up monitoring")
+
+When a developer asks to set up a project for hot reload monitoring, do this before monitoring:
+
+1. Find the MAUI project (`.csproj`) and `MauiProgram.cs` in the target project.
+2. Check whether `HotReloadSentinel.Diagnostics` package is already referenced.
+3. Check whether `MauiProgram.cs` already contains `builder.UseHotReloadDiagnostics();`.
+4. Only if missing, apply setup:
+   - Run `dotnet add package HotReloadSentinel.Diagnostics` in the project directory.
+   - Update `MauiProgram.cs`:
+     - Add `using HotReloadSentinel.Diagnostics;` inside `#if DEBUG` blocks
+     - Add `builder.UseHotReloadDiagnostics();` inside `#if DEBUG` after builder creation
+5. Re-check and report exactly what was changed.
+
+Do not assume VS Code; this setup applies to both VS Code and Visual Studio projects.
+
 ## Monitoring Workflow
 
 When a developer asks to "watch hot reload", "monitor hot reload", or any hot-reload related task:
@@ -17,7 +33,7 @@ When a developer asks to "watch hot reload", "monitor hot reload", or any hot-re
    - Missing ENC log directory → explain it must be set before launching the IDE
    - Missing BOM on .cs files → offer to auto-fix with `hr_diagnose --fix`
    - Missing MetadataUpdateHandler → offer to scaffold one for their framework
-   - VS Code settings not configured → offer to auto-fix
+   - VS Code settings not configured (when VS Code is in use) → offer to auto-fix
 4. Ask the developer if they'd like you to fix any auto-fixable issues before proceeding
 5. If critical prerequisites are unmet (no ENC log dir, no Session.log), stop and explain — watching without these will produce no useful data
 
@@ -42,15 +58,18 @@ When a developer asks to "watch hot reload", "monitor hot reload", or any hot-re
 
 ### CRITICAL: ENC Log Directory
 ```bash
-# Must be set BEFORE launching VS Code
+# Must be set BEFORE launching your IDE (VS Code or Visual Studio)
 export Microsoft_CodeAnalysis_EditAndContinue_LogDir=/tmp/HotReloadLog  # macOS/Linux
-set Microsoft_CodeAnalysis_EditAndContinue_LogDir=%temp%\HotReloadLog   # Windows
+```
+```powershell
+# Windows (persistent; restart terminal after running)
+setx Microsoft_CodeAnalysis_EditAndContinue_LogDir "%temp%\HotReloadLog"
 ```
 
 ### File Encoding
 All `.cs` files MUST be UTF-8 with BOM. Files without BOM will silently fail hot reload.
 
-### VS Code Settings
+### VS Code Settings (VS Code users only)
 ```json
 {
   "csharp.experimental.debug.hotReload": true,

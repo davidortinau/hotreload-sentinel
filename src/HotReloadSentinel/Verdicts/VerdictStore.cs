@@ -117,6 +117,9 @@ public sealed class SentinelState
     // Cumulative log counters
     public int SaveCount { get; set; }
     public int ApplyCount { get; set; }
+    public int XamlCodeBehindChangeCount { get; set; }
+    public int XamlChangeCount { get; set; }
+    public int XamlApplyCount { get; set; }
     public int ResultSuccessCount { get; set; }
     public int ResultFailureCount { get; set; }
     public int Enc1008Count { get; set; }

@@ -7,19 +7,16 @@ using System.Text.RegularExpressions;
 /// </summary>
 public static class ArtifactDiffer
 {
-    static readonly Regex ArtifactNamePattern = new(@"\.(\d+)\.(\d+)\.old\.cs$", RegexOptions.Compiled);
-
     /// <summary>
-    /// Find the most recent artifact pair, optionally newer than a given mtime.
+    /// Find all artifact pairs newer than a given mtime (or all when null), sorted by mtime ascending.
     /// </summary>
-    public static ArtifactPair? FindLatest(string hotReloadDir, double? afterMtime = null)
+    public static List<ArtifactPair> FindAllSince(string hotReloadDir, double? afterMtime = null)
     {
+        var results = new List<ArtifactPair>();
         if (!Directory.Exists(hotReloadDir))
-            return null;
+            return results;
 
-        ArtifactPair? best = null;
-        double bestMtime = afterMtime ?? 0;
-
+        var threshold = afterMtime ?? 0;
         foreach (var oldFile in Directory.EnumerateFiles(hotReloadDir, "*.old.cs", SearchOption.AllDirectories))
         {
             var newFile = oldFile.Replace(".old.cs", ".new.cs");
@@ -27,22 +24,29 @@ public static class ArtifactDiffer
                 continue;
 
             var mtime = new FileInfo(oldFile).LastWriteTimeUtc.Subtract(DateTime.UnixEpoch).TotalSeconds;
-            if (mtime > bestMtime)
+            if (mtime <= threshold)
+                continue;
+
+            results.Add(new ArtifactPair
             {
-                bestMtime = mtime;
-                var name = ArtifactNamePattern.Replace(Path.GetFileName(oldFile), ".$1.$2");
-                best = new ArtifactPair
-                {
-                    OldPath = oldFile,
-                    NewPath = newFile,
-                    Name = Regex.Replace(Path.GetFileName(oldFile), @"\.old\.cs$", ""),
-                    SourceFile = Path.GetRelativePath(hotReloadDir, oldFile),
-                    Mtime = mtime,
-                };
-            }
+                OldPath = oldFile,
+                NewPath = newFile,
+                Name = Regex.Replace(Path.GetFileName(oldFile), @"\.old\.cs$", ""),
+                SourceFile = Path.GetRelativePath(hotReloadDir, oldFile),
+                Mtime = mtime,
+            });
         }
 
-        return best;
+        results.Sort((a, b) => a.Mtime.CompareTo(b.Mtime));
+        return results;
+    }
+
+    /// <summary>
+    /// Find the most recent artifact pair, optionally newer than a given mtime.
+    /// </summary>
+    public static ArtifactPair? FindLatest(string hotReloadDir, double? afterMtime = null)
+    {
+        return FindAllSince(hotReloadDir, afterMtime).LastOrDefault();
     }
 
     /// <summary>
