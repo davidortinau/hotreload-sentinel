@@ -1,5 +1,9 @@
 # Hot Reload Sentinel
 
+[![NuGet](https://img.shields.io/nuget/v/HotReloadSentinel?label=HotReloadSentinel)](https://www.nuget.org/packages/HotReloadSentinel)
+[![NuGet](https://img.shields.io/nuget/v/HotReloadSentinel.Diagnostics?label=HotReloadSentinel.Diagnostics)](https://www.nuget.org/packages/HotReloadSentinel.Diagnostics)
+[![Build and Test](https://github.com/davidortinau/hotreload-sentinel/actions/workflows/build.yml/badge.svg)](https://github.com/davidortinau/hotreload-sentinel/actions/workflows/build.yml)
+
 A diagnostic tool for .NET MAUI Hot Reload. Monitors reload sessions, validates your environment, confirms each code change with the developer, and generates structured bug reports when things go wrong.
 
 Built for developers who use GitHub Copilot CLI but works standalone too.
