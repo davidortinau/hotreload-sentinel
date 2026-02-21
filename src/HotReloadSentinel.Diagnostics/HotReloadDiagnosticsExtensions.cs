@@ -8,8 +8,10 @@ namespace HotReloadSentinel.Diagnostics;
 /// </summary>
 public static class HotReloadDiagnosticsExtensions
 {
+#pragma warning disable CS0649 // Assigned in #if DEBUG block
     static DiagnosticsEndpointMiddleware? _endpoint;
     static PortFileWriter? _portFile;
+#pragma warning restore CS0649
 
     /// <summary>
     /// Enables hot reload diagnostics: heartbeat endpoint, update counter, and port file.
