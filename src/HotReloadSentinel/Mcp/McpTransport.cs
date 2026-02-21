@@ -7,28 +7,38 @@ using System.Text.Json;
 /// </summary>
 public sealed class McpTransport
 {
-    readonly Stream _input;
+    readonly StreamReader _reader;
     readonly Stream _output;
     bool _useJsonl;
+    bool _detected;
 
     public McpTransport(Stream input, Stream output)
     {
-        _input = input;
+        _reader = new StreamReader(input, leaveOpen: true);
         _output = output;
     }
 
     public async Task<JsonElement?> ReadMessageAsync(CancellationToken ct)
     {
-        using var reader = new StreamReader(_input, leaveOpen: true);
-
-        var firstLine = await reader.ReadLineAsync(ct);
+        var firstLine = await _reader.ReadLineAsync(ct);
         if (firstLine is null) return null;
 
-        // Auto-detect: if first line is JSON, use JSONL mode
         var trimmed = firstLine.Trim();
-        if (trimmed.StartsWith('{') && trimmed.EndsWith('}'))
+        if (string.IsNullOrEmpty(trimmed))
         {
-            _useJsonl = true;
+            // Skip blank lines between messages
+            return await ReadMessageAsync(ct);
+        }
+
+        // Auto-detect on first message
+        if (!_detected)
+        {
+            _useJsonl = trimmed.StartsWith('{');
+            _detected = true;
+        }
+
+        if (_useJsonl)
+        {
             return JsonSerializer.Deserialize<JsonElement>(trimmed);
         }
 
@@ -40,14 +50,14 @@ public sealed class McpTransport
             var colonIdx = line.IndexOf(':');
             if (colonIdx > 0)
                 headers[line[..colonIdx].Trim().ToLower()] = line[(colonIdx + 1)..].Trim();
-            line = await reader.ReadLineAsync(ct);
+            line = await _reader.ReadLineAsync(ct);
         }
 
         if (!headers.TryGetValue("content-length", out var lengthStr) || !int.TryParse(lengthStr, out var length))
             throw new InvalidOperationException("Missing Content-Length header");
 
         var buffer = new char[length];
-        var read = await reader.ReadBlockAsync(buffer, 0, length);
+        var read = await _reader.ReadBlockAsync(buffer, 0, length);
         if (read != length)
             throw new InvalidOperationException("Incomplete message body");
 
