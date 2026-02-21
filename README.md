@@ -8,9 +8,15 @@ Built for developers who use GitHub Copilot CLI but works standalone too.
 
 ## The Problem
 
-Hot Reload in .NET MAUI is powerful but fragile. A missing environment variable, a file saved without a BOM, a handler that was never registered -- any of these will silently break your reload loop. You save a file, nothing happens, and you have no idea why.
+Hot Reload in .NET MAUI is powerful but fragile. A missing environment variable, a file saved without a BOM, a handler that was never registered -- any of these will silently break your reload loop. You edit a file, trigger a reload, nothing happens, and you have no idea why.
 
-Worse, some changes partially succeed: the Edit and Continue engine applies the delta, but the UI never updates. The framework reports success while the screen shows stale content. Diagnosing this requires cross-referencing Session.log entries, artifact diffs, framework-specific handler requirements, and IDE settings -- a process that is tedious, error-prone, and deeply specific to your project's UI approach.
+Worse, some changes partially succeed: the Edit and Continue engine applies the delta, but the UI never updates. The framework reports success while the screen shows stale content. When you report "hot reload didn't work," that could mean any of:
+
+1. The delta never reached the app (transport failure)
+2. The app received the delta but the MetadataUpdateHandler didn't fire
+3. The handler fired but the UI framework didn't re-render the component
+
+Diagnosing which layer failed requires cross-referencing Session.log entries, artifact diffs, app-side update counters, framework-specific handler requirements, and IDE settings -- a process that is tedious, error-prone, and deeply specific to your project's UI approach.
 
 Hot Reload Sentinel automates all of it.
 
@@ -18,11 +24,13 @@ Hot Reload Sentinel automates all of it.
 
 **Diagnose** -- Validates your environment before you start debugging. Checks that the ENC log directory is configured, all `.cs` files are UTF-8 with BOM, your project has the correct `MetadataUpdateHandler` for its UI framework (MauiReactor, C# Markup, Blazor Hybrid, or XAML), and your IDE settings are correct.
 
-**Monitor** -- Watches `Session.log` and an optional app-side heartbeat endpoint in real-time. Detects new apply events, extracts the specific code changes (what we call "atoms"), and tracks session health as IDLE, ACTIVE, or DEGRADED.
+**Monitor** -- Watches `Session.log` and an app-side heartbeat endpoint in real-time. Detects new apply events, extracts the specific code changes (what we call "atoms"), and tracks session health as IDLE, ACTIVE, or DEGRADED. The heartbeat confirms that the app actually received each delta and its update handler fired -- critical for isolating where a failure occurred.
 
 **Confirm** -- After each reload, asks the developer about every individual change: did the label text update? Did the shadow render? Did the layout shift? Records per-atom verdicts of `yes`, `no`, or `partial`. This granularity matters because a single save can contain multiple changes, and some may succeed while others fail.
 
-**Report** -- Generates a structured GitHub issue from the session, splitting confirmed successes from failures. Includes the exact code diffs, ENC log excerpts, framework context, and environment details needed to file a reproducible bug report.
+![Copilot CLI asking the developer to confirm whether a hot reload change rendered correctly](media/hot-reload-confirmation.png)
+
+**Report** -- Generates a structured GitHub issue from the session, splitting confirmed successes from failures. Includes the exact code diffs, ENC log excerpts, heartbeat state, framework context, and environment details needed to file a reproducible bug report.
 
 ## Install
 
@@ -38,9 +46,42 @@ hotreload-sentinel init
 
 This does three things:
 
-1. Adds the MCP server configuration to `~/.copilot/config/mcp.json`
+1. Adds the MCP server configuration to `~/.copilot/mcp-config.json`
 2. Installs the Copilot skill to `~/.copilot/skills/hotreload-sentinel/`
 3. Validates your environment and reports anything that needs attention
+
+## App-Side Diagnostics
+
+Add the diagnostics NuGet to your MAUI app. This gives the sentinel visibility into what the app actually received, which is essential for distinguishing IDE-side success from app-side failure.
+
+```
+dotnet add package HotReloadSentinel.Diagnostics
+```
+
+In `MauiProgram.cs`:
+
+```csharp
+#if DEBUG
+using HotReloadSentinel.Diagnostics;
+#endif
+
+// ...
+
+var builder = MauiApp.CreateBuilder();
+
+#if DEBUG
+builder.UseHotReloadDiagnostics();
+#endif
+```
+
+This provides:
+
+- **Heartbeat endpoint** -- An HTTP listener the sentinel polls after each reload. If the update counter advances, the delta reached the app and the handler fired. If it doesn't, the problem is upstream of your app.
+- **Update counter** -- Tracks how many metadata updates the app has received, exposed via the heartbeat response.
+- **Automatic MetadataUpdateHandler** -- Registered via assembly attribute. No manual wiring required. Compatible with additional handlers your app may already have.
+- **Port file** -- Writes the heartbeat port to a known location so the sentinel discovers it automatically.
+
+The diagnostics package is `#if DEBUG` guarded. It compiles to a no-op in Release builds.
 
 ## Usage
 
@@ -53,7 +94,7 @@ Once installed, just ask naturally:
 - "Check if my project is set up for hot reload"
 - "Generate a bug report from my hot reload failures"
 
-The Copilot skill teaches the agent how to use the MCP tools, interpret diagnostic results, and walk you through per-change confirmations.
+The Copilot skill teaches the agent how to use the MCP tools, interpret diagnostic results, and walk you through per-change confirmations. The agent will continuously follow your session, detect each apply event, and proactively ask you whether each change rendered.
 
 ### Standalone CLI
 
@@ -79,7 +120,7 @@ Returns structured JSON with pass/warn/fail results for every check:
   "project": {
     "framework": "MauiReactor",
     "hasMetadataUpdateHandler": true,
-    "targetFrameworks": ["net9.0-ios", "net9.0-android", "net9.0-maccatalyst"]
+    "targetFrameworks": ["net10.0-ios", "net10.0-android", "net10.0-maccatalyst"]
   },
   "ide": {
     "hotReloadEnabled": true,
@@ -137,48 +178,37 @@ The server runs as a subprocess managed by the Copilot CLI. You do not need to s
 1. Developer edits a .cs file and initiates a hot reload
 2. .NET Hot Reload applies the delta (logged in Session.log)
 3. Sentinel detects the apply event and extracts change atoms
-4. Copilot CLI calls hr_pending_atoms, gets a list like:
-     [0] Label text changed: "Hello" -> "Hello World"  (FormsPage.cs:42)
-     [1] Shadow added to Card border                    (FormsPage.cs:58)
-5. Agent asks the developer about each atom individually
-6. Developer responds: [0] yes, [1] no
-7. Agent calls hr_record_verdict with the results
-8. On request, hr_draft_issue produces a bug report that includes:
-     - Atom [0]: PASSED (label text change)
-     - Atom [1]: FAILED (shadow on Border)
+4. Sentinel checks the app heartbeat:
+     - updateCount advanced: app received delta, handler fired
+     - updateCount unchanged: delta never reached the app
+5. Copilot CLI calls hr_pending_atoms, gets a list like:
+     [0] Label style changed: .Class(Bs.H4) -> .Class(Bs.H1)  (ThemesPage.cs:28)
+     [1] Shadow added to Card border                            (FormsPage.cs:58)
+6. Agent asks the developer about each atom individually
+7. Developer responds: [0] yes, [1] no
+8. Agent calls hr_record_verdict with the results
+9. On request, hr_draft_issue produces a bug report that includes:
+     - Atom [0]: PASSED (heading style change, heartbeat confirmed)
+     - Atom [1]: FAILED (shadow on Border, heartbeat confirmed but UI stale)
      - Relevant Session.log excerpt
      - Code diff for the failed atom
+     - Heartbeat state at time of apply
      - Environment and framework details
 ```
 
 This per-atom granularity prevents a common diagnostic trap: a save that contains both a working text change and a broken shadow change would otherwise be reported as simply "hot reload failed," losing the signal about what specifically broke.
 
-## App-Side Diagnostics (Optional)
+The heartbeat layer adds a second dimension: when atom [1] fails but the heartbeat shows the update counter advanced, we know the delta reached the app and the handler fired -- the problem is specifically in the UI framework's rendering, not in the hot reload transport. This distinction is critical for filing actionable bug reports.
 
-For deeper integration, add the diagnostics NuGet to your MAUI app:
+## Three Layers of Visibility
 
-```
-dotnet add package HotReloadSentinel.Diagnostics
-```
+| Layer | Source | What It Tells You |
+|-------|--------|-------------------|
+| IDE | Session.log | ENC engine compiled and emitted the delta |
+| App | Heartbeat endpoint | App received the delta and MetadataUpdateHandler fired |
+| Developer | Confirmation verdicts | UI actually rendered the change on screen |
 
-In `MauiProgram.cs`:
-
-```csharp
-var builder = MauiApp.CreateBuilder();
-
-builder.UseHotReloadDiagnostics();  // Add this line
-
-// ... rest of your setup
-```
-
-This provides:
-
-- **Heartbeat endpoint** -- An HTTP listener the sentinel can ping to confirm the app is responsive after a reload. The sentinel uses this to distinguish "reload succeeded but UI didn't update" from "app crashed."
-- **Update counter** -- Tracks how many metadata updates the app has received, exposed via the heartbeat response.
-- **Automatic MetadataUpdateHandler** -- Registered via assembly attribute. No manual wiring required.
-- **Port file** -- Writes the heartbeat port to a known location so the sentinel can discover it automatically.
-
-The diagnostics package is `#if DEBUG` guarded. It compiles to a no-op in Release builds.
+When all three agree, hot reload worked. When they disagree, the gap between layers pinpoints where the failure occurred.
 
 ## Framework Support
 
