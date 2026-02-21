@@ -101,6 +101,10 @@ public sealed class McpServer
         psi.ArgumentList.Add("watch-start");
 
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start watch-start process");
+        // If startup fails immediately (e.g., command not found), surface it as MCP error.
+        if (proc.WaitForExit(3000) && proc.ExitCode != 0)
+            throw new InvalidOperationException($"watch-start failed to launch (exit={proc.ExitCode}).");
+
         return WrapText("hr_watch_start: requested");
     }
 
