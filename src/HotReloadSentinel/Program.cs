@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Text.Json;
+using HotReloadSentinel.Diagnostics;
 using HotReloadSentinel.IssueGeneration;
 using HotReloadSentinel.Mcp;
 using HotReloadSentinel.Monitoring;
@@ -92,13 +93,74 @@ statusCmd.SetHandler(() =>
 rootCommand.AddCommand(statusCmd);
 
 // diagnose
-var diagnoseCmd = new Command("diagnose", "Show latest save/apply/heartbeat correlation summary.");
-diagnoseCmd.SetHandler(() =>
+var diagnoseCmd = new Command("diagnose", "Full environment validation and hot reload diagnostics.");
+var projectDirOption = new Option<string?>("--project-dir", "Project directory to analyze (auto-detected if not specified).");
+diagnoseCmd.AddOption(projectDirOption);
+diagnoseCmd.SetHandler((string? projDir) =>
 {
+    projDir ??= Directory.GetCurrentDirectory();
     var state = store.Read();
     var status = WatchLoop.ComputeStatus(state);
+
     Console.WriteLine($"hr_diagnose: status={status}");
     Console.WriteLine($"summary save_count={state.SaveCount} apply_count={state.ApplyCount} result_success={state.ResultSuccessCount} result_failure={state.ResultFailureCount} not_applied={state.NotAppliedCount} not_applied_other_tfm={state.NotAppliedOtherTfmCount} enc1008={state.Enc1008Count} app_heartbeat_recent={state.HeartbeatOk} heartbeat_update_count={state.LastHeartbeatUpdateCount}");
+
+    // Run all diagnostic checks
+    var checks = new List<DiagnosticCheck>();
+    checks.AddRange(EnvironmentChecker.Run());
+    checks.Add(EncodingChecker.Run(projDir));
+    checks.AddRange(ProjectAnalyzer.Run(projDir));
+    checks.AddRange(IdeSettingsChecker.Run(projDir));
+
+    // Heartbeat check
+    checks.Add(new DiagnosticCheck
+    {
+        Id = "heartbeat",
+        Name = "App Heartbeat Endpoint",
+        Status = state.HeartbeatOk ? CheckStatus.Pass : CheckStatus.Warn,
+        Message = state.HeartbeatOk
+            ? $"Heartbeat reachable at {state.SelectedEndpoint} (pid={state.SelectedPid})"
+            : "No heartbeat endpoint reachable. App may not be running or diagnostics NuGet not installed.",
+        AutoFixable = false,
+    });
+
+    var passed = checks.Count(c => c.Status == CheckStatus.Pass);
+    var warned = checks.Count(c => c.Status == CheckStatus.Warn);
+    var failed = checks.Count(c => c.Status == CheckStatus.Fail);
+    var fixable = checks.Count(c => c.AutoFixable && c.Status != CheckStatus.Pass);
+
+    Console.WriteLine();
+    foreach (var c in checks)
+    {
+        var icon = c.Status switch { CheckStatus.Pass => "✅", CheckStatus.Warn => "⚠️", _ => "❌" };
+        Console.WriteLine($"  {icon} [{c.Id}] {c.Name}: {c.Message}");
+        if (c.AffectedFiles is { Count: > 0 })
+        {
+            foreach (var f in c.AffectedFiles.Take(5))
+                Console.WriteLine($"       → {f}");
+            if (c.AffectedFiles.Count > 5)
+                Console.WriteLine($"       ... and {c.AffectedFiles.Count - 5} more");
+        }
+    }
+    Console.WriteLine();
+    Console.WriteLine($"checks: {passed} passed, {warned} warnings, {failed} failed, {fixable} auto-fixable");
+
+    // JSON output for MCP
+    var jsonResult = JsonSerializer.Serialize(new
+    {
+        checks = checks.Select(c => new
+        {
+            id = c.Id, name = c.Name,
+            status = c.Status.ToString().ToLower(),
+            message = c.Message,
+            auto_fixable = c.AutoFixable,
+            fix_command = c.FixCommand,
+            affected_files = c.AffectedFiles,
+        }),
+        summary = $"{passed}/{checks.Count} checks passed, {fixable} auto-fixable issues",
+        auto_fix_available = fixable > 0,
+    }, new JsonSerializerOptions { WriteIndented = false });
+    Console.WriteLine($"diagnose_json={jsonResult}");
 
     var artifact = ArtifactDiffer.FindLatest(hotReloadDir);
     if (artifact is not null)
@@ -108,8 +170,22 @@ diagnoseCmd.SetHandler(() =>
         if (!string.IsNullOrEmpty(preview))
             Console.WriteLine($"artifact_diff_preview={preview}");
     }
-});
+}, projectDirOption);
 rootCommand.AddCommand(diagnoseCmd);
+
+// fix
+var fixCmd = new Command("fix", "Auto-fix diagnosed issues.");
+var fixCheckOption = new Option<string>("--check", "Check ID to fix (e.g., bom_encoding, metadata_handler, vscode_verbosity).") { IsRequired = true };
+var fixProjectDirOption = new Option<string?>("--project-dir", "Project directory.");
+fixCmd.AddOption(fixCheckOption);
+fixCmd.AddOption(fixProjectDirOption);
+fixCmd.SetHandler((string checkId, string? projDir) =>
+{
+    projDir ??= Directory.GetCurrentDirectory();
+    var (success, message) = AutoFixer.Fix(checkId, projDir);
+    Console.WriteLine(success ? $"✅ Fixed [{checkId}]: {message}" : $"❌ [{checkId}]: {message}");
+}, fixCheckOption, fixProjectDirOption);
+rootCommand.AddCommand(fixCmd);
 
 // watch-follow
 var watchFollowCmd = new Command("watch-follow", "Stream status/alerts in foreground.");
