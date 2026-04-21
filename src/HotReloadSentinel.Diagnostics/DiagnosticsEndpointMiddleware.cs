@@ -57,16 +57,23 @@ public sealed class DiagnosticsEndpointMiddleware : IDisposable
     static async Task HandleRequest(HttpListenerContext context)
     {
         var path = context.Request.Url?.AbsolutePath ?? "/";
+        var method = context.Request.HttpMethod;
 
-        if (path == "/heartbeat" || path == "/")
+        if ((method == "GET" || method == "HEAD") && (path == "/heartbeat" || path == "/"))
         {
             var payload = new
             {
                 pid = Environment.ProcessId,
                 updateCount = MetadataUpdateCounter.UpdateCount,
+                failedCount = MetadataUpdateCounter.FailedCount,
+                applySequence = MetadataUpdateCounter.ApplySequence,
                 lastUpdateTimestampUtc = MetadataUpdateCounter.LastUpdateUtc == DateTime.MinValue
                     ? null
                     : MetadataUpdateCounter.LastUpdateUtc.ToString("o"),
+                lastFailureTimestampUtc = MetadataUpdateCounter.LastFailureUtc == DateTime.MinValue
+                    ? null
+                    : MetadataUpdateCounter.LastFailureUtc.ToString("o"),
+                lastFailureReason = MetadataUpdateCounter.LastFailureReason,
                 uptimeSeconds = (int)(DateTime.UtcNow - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime()).TotalSeconds,
             };
 
@@ -76,6 +83,41 @@ public sealed class DiagnosticsEndpointMiddleware : IDisposable
             var buffer = System.Text.Encoding.UTF8.GetBytes(json);
             context.Response.ContentLength64 = buffer.Length;
             await context.Response.OutputStream.WriteAsync(buffer);
+        }
+        else if (method == "POST" && path == "/failed")
+        {
+            string? reason = null;
+            try
+            {
+                using var reader = new StreamReader(context.Request.InputStream, System.Text.Encoding.UTF8);
+                var body = await reader.ReadToEndAsync();
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(body);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("reason", out var r) &&
+                            r.ValueKind == JsonValueKind.String)
+                        {
+                            reason = r.GetString();
+                        }
+                        else
+                        {
+                            reason = body;
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        reason = body;
+                    }
+                }
+            }
+            catch { /* best-effort body read */ }
+
+            MetadataUpdateCounter.ReportFailure(reason);
+            context.Response.StatusCode = 204;
+            context.Response.ContentLength64 = 0;
         }
         else
         {
@@ -95,3 +137,4 @@ public sealed class DiagnosticsEndpointMiddleware : IDisposable
         _cts.Dispose();
     }
 }
+
