@@ -2,6 +2,7 @@ namespace HotReloadSentinel.Diagnostics.Maui;
 
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 /// <summary>
 /// Observable state for the hot reload overlay. Listens to
@@ -63,8 +64,16 @@ public sealed class HotReloadOverlayState : INotifyPropertyChanged
 
     void OnApplied(object? sender, HotReloadAppliedEventArgs e)
     {
-        if (e.ApplySequence < _lastObservedSequence) return;
-        _lastObservedSequence = e.ApplySequence;
+        // Atomic monotonic guard: only advance if our sequence is the newest.
+        // Concurrent OnApplied/OnFailed can race from arbitrary runtime threads.
+        long observed;
+        do
+        {
+            observed = Interlocked.Read(ref _lastObservedSequence);
+            if (e.ApplySequence < observed) return;
+        }
+        while (Interlocked.CompareExchange(ref _lastObservedSequence, e.ApplySequence, observed) != observed);
+
         AppliedCount = e.UpdateCount;
         StatusAtUtc = e.TimestampUtc;
         // A successful apply always clears prior failure state.
@@ -74,8 +83,14 @@ public sealed class HotReloadOverlayState : INotifyPropertyChanged
 
     void OnFailed(object? sender, HotReloadFailedEventArgs e)
     {
-        if (e.ApplySequence < _lastObservedSequence) return;
-        _lastObservedSequence = e.ApplySequence;
+        long observed;
+        do
+        {
+            observed = Interlocked.Read(ref _lastObservedSequence);
+            if (e.ApplySequence < observed) return;
+        }
+        while (Interlocked.CompareExchange(ref _lastObservedSequence, e.ApplySequence, observed) != observed);
+
         FailedCount = e.FailedCount;
         FailureReason = e.Reason;
         StatusAtUtc = e.TimestampUtc;
@@ -87,7 +102,7 @@ public sealed class HotReloadOverlayState : INotifyPropertyChanged
     /// occurred since.</summary>
     public void DismissApplied(long observedAtSequence)
     {
-        if (Status == OverlayStatus.Applied && observedAtSequence == _lastObservedSequence)
+        if (Status == OverlayStatus.Applied && observedAtSequence == Interlocked.Read(ref _lastObservedSequence))
         {
             Status = OverlayStatus.Idle;
         }
@@ -101,7 +116,7 @@ public sealed class HotReloadOverlayState : INotifyPropertyChanged
         MetadataUpdateCounter.Failed -= OnFailed;
     }
 
-    public long ObservedSequence => _lastObservedSequence;
+    public long ObservedSequence => Interlocked.Read(ref _lastObservedSequence);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

@@ -90,11 +90,20 @@ public sealed class HotReloadOverlay : Border
 
     void ShowAndScheduleFade(long sequence)
     {
-        CancelFade();
+        var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        // Atomically swap and dispose any prior CTS so we never leak and never
+        // double-cancel. The captured 'token' below is safe even if a third
+        // call disposes its parent CTS — the token's CTS is private to this call.
+        var old = Interlocked.Exchange(ref _fadeCts, cts);
+        if (old is not null)
+        {
+            try { old.Cancel(); } catch { }
+            old.Dispose();
+        }
+
         IsVisible = true;
         Opacity = 1;
-        _fadeCts = new CancellationTokenSource();
-        var token = _fadeCts.Token;
 
         _ = Task.Run(async () =>
         {
@@ -103,6 +112,7 @@ public sealed class HotReloadOverlay : Border
                 await Task.Delay(FadeDelay, token);
             }
             catch (TaskCanceledException) { return; }
+            catch (ObjectDisposedException) { return; }
             if (token.IsCancellationRequested) return;
 
             Dispatcher?.Dispatch(async () =>
@@ -117,7 +127,9 @@ public sealed class HotReloadOverlay : Border
 
     void CancelFade()
     {
-        try { _fadeCts?.Cancel(); } catch { }
-        _fadeCts = null;
+        var cts = Interlocked.Exchange(ref _fadeCts, null);
+        if (cts is null) return;
+        try { cts.Cancel(); } catch { }
+        cts.Dispose();
     }
 }

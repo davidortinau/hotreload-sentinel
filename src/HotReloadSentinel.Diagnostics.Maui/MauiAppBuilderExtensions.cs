@@ -1,5 +1,6 @@
 namespace HotReloadSentinel.Diagnostics.Maui;
 
+using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Hosting;
@@ -32,6 +33,11 @@ internal sealed class HotReloadOverlayInitializer : IMauiInitializeService
     static HotReloadOverlayState? s_state;
     static readonly List<HotReloadOverlayHost> s_hosts = new();
     static bool s_subscribed;
+    static int s_subscribeRetries;
+    // Bound the discovery retry so we don't spin forever in headless / misconfigured
+    // hosts where Application.Current is never assigned. ~10s at the dispatcher's
+    // typical cadence, after which we silently give up — overlay is debug-only.
+    const int MaxSubscribeRetries = 200;
 
     public void Initialize(IServiceProvider services)
     {
@@ -47,7 +53,12 @@ internal sealed class HotReloadOverlayInitializer : IMauiInitializeService
         var app = Application.Current;
         if (app is null)
         {
-            // Try again on the next dispatcher beat.
+            if (Interlocked.Increment(ref s_subscribeRetries) > MaxSubscribeRetries)
+            {
+                // Give up — Application.Current was never set. Overlay simply
+                // won't appear; diagnostics endpoint still works.
+                return;
+            }
             var dispatcher = Microsoft.Maui.Dispatching.Dispatcher.GetForCurrentThread();
             dispatcher?.Dispatch(TrySubscribe);
             return;

@@ -14,6 +14,14 @@ internal sealed class HotReloadOverlayHost
     HotReloadOverlay? _overlay;
     Page? _hostedPage;
 
+    // Track outer container subscriptions so we can detach cleanly and avoid
+    // accumulating handlers when navigation re-fires TryAttach.
+    Shell? _subscribedShell;
+    EventHandler<ShellNavigatedEventArgs>? _shellNavigatedHandler;
+    NavigationPage? _subscribedNav;
+    EventHandler<NavigationEventArgs>? _navPushedHandler;
+    EventHandler<NavigationEventArgs>? _navPoppedHandler;
+
     public HotReloadOverlayHost(Window window, HotReloadOverlayState state)
     {
         Window = window;
@@ -35,10 +43,6 @@ internal sealed class HotReloadOverlayHost
     {
         if (page is null) return;
 
-        // The overlay must live inside an absolute-style container so it
-        // can sit in front of the page content. Pages already provide a
-        // Layout container if they're ContentPage; for the MVP we wrap
-        // the existing content in a Grid only if necessary.
         if (page is ContentPage cp)
         {
             var existing = cp.Content;
@@ -60,32 +64,57 @@ internal sealed class HotReloadOverlayHost
             cp.Content = grid;
             _hostedPage = page;
         }
-        // Other page kinds (NavigationPage, FlyoutPage, Shell, TabbedPage)
-        // auto-route via their CurrentPage; subscribe and re-attach.
         else if (page is Shell shell)
         {
-            shell.Navigated += (_, _) => { Detach(); TryAttach(shell.CurrentPage); };
+            DetachShell();
+            _shellNavigatedHandler = (_, _) => { Detach(); TryAttach(shell.CurrentPage); };
+            shell.Navigated += _shellNavigatedHandler;
+            _subscribedShell = shell;
             TryAttach(shell.CurrentPage);
         }
         else if (page is NavigationPage nav)
         {
-            nav.Pushed += (_, _) => { Detach(); TryAttach(nav.CurrentPage); };
-            nav.Popped += (_, _) => { Detach(); TryAttach(nav.CurrentPage); };
+            DetachNav();
+            _navPushedHandler = (_, _) => { Detach(); TryAttach(nav.CurrentPage); };
+            _navPoppedHandler = (_, _) => { Detach(); TryAttach(nav.CurrentPage); };
+            nav.Pushed += _navPushedHandler;
+            nav.Popped += _navPoppedHandler;
+            _subscribedNav = nav;
             TryAttach(nav.CurrentPage);
         }
     }
 
     void Detach()
     {
-        if (_hostedPage is ContentPage cp && cp.Content is Grid g && g.StyleId == OverlayHostStyleId)
-        {
-            // Leave the wrapper grid in place; tearing it down on every
-            // navigation would cause layout flicker. We just clear the
-            // overlay reference; the new TryAttach picks up the existing
-            // grid by StyleId.
-        }
+        // Leave the wrapper grid in place — tearing it down on every nav
+        // would cause layout flicker. Just clear refs; TryAttach picks up
+        // the existing grid by StyleId.
         _overlay = null;
         _hostedPage = null;
+        DetachShell();
+        DetachNav();
+    }
+
+    void DetachShell()
+    {
+        if (_subscribedShell is not null && _shellNavigatedHandler is not null)
+        {
+            _subscribedShell.Navigated -= _shellNavigatedHandler;
+        }
+        _subscribedShell = null;
+        _shellNavigatedHandler = null;
+    }
+
+    void DetachNav()
+    {
+        if (_subscribedNav is not null)
+        {
+            if (_navPushedHandler is not null) _subscribedNav.Pushed -= _navPushedHandler;
+            if (_navPoppedHandler is not null) _subscribedNav.Popped -= _navPoppedHandler;
+        }
+        _subscribedNav = null;
+        _navPushedHandler = null;
+        _navPoppedHandler = null;
     }
 
     const string OverlayHostStyleId = "__hotreload_overlay_host__";

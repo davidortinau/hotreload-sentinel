@@ -150,17 +150,18 @@ public sealed class WatchLoop
         EndpointInfo? endpoint,
         CancellationToken ct)
     {
-        // 1) Enqueue a check for any newly-observed successful apply.
+        // 1) Enqueue a single check for any newly-observed successful apply(s).
+        // We can't reliably split a burst into per-apply checks because the
+        // heartbeat baseline may already include some of the burst's applies
+        // (we sample heartbeat asynchronously from the log). Instead we ask:
+        // did the app-side counter advance AT ALL within FailureWindow after
+        // we saw at least one success in the log? That's enough to flip red.
         if (state.ResultSuccessCount > _lastObservedResultSuccessCount && heartbeat?.UpdateCount is int baseline)
         {
-            var newSuccesses = state.ResultSuccessCount - _lastObservedResultSuccessCount;
-            for (int i = 0; i < newSuccesses; i++)
-            {
-                _pendingChecks.Add(new PendingApplyCheck(
-                    ResultCount: _lastObservedResultSuccessCount + i + 1,
-                    HeartbeatBaseline: baseline + i, // expect at least N more after N successes
-                    Deadline: DateTime.UtcNow + FailureWindow));
-            }
+            _pendingChecks.Add(new PendingApplyCheck(
+                ResultCount: state.ResultSuccessCount,
+                HeartbeatBaseline: baseline + 1,
+                Deadline: DateTime.UtcNow + FailureWindow));
             _lastObservedResultSuccessCount = state.ResultSuccessCount;
         }
         else if (state.ResultSuccessCount > _lastObservedResultSuccessCount)
