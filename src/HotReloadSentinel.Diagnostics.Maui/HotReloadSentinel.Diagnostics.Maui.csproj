@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net11.0-android;net11.0-ios;net11.0-maccatalyst</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net11.0-windows10.0.19041.0</TargetFrameworks>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HotReloadSentinel.Diagnostics.Maui</RootNamespace>
+
+    <!-- iOS / Android boilerplate so MAUI SDK is happy with no app metadata. -->
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+
+    <PackageId>HotReloadSentinel.Diagnostics.Maui</PackageId>
+    <Version>0.1.1</Version>
+    <Authors>David Ortinau</Authors>
+    <Description>In-app overlay for .NET MAUI showing hot reload status (success/failure + count). Pairs with HotReloadSentinel.Diagnostics and the hotreload-sentinel CLI.</Description>
+    <PackageProjectUrl>https://github.com/davidortinau/hotreload-sentinel</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/davidortinau/hotreload-sentinel</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>maui;hot-reload;diagnostics;overlay</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.0-preview.3.26203.7" />
+    <ProjectReference Include="..\HotReloadSentinel.Diagnostics\HotReloadSentinel.Diagnostics.csproj" />
+  </ItemGroup>
+
+</Project>
