@@ -3,6 +3,7 @@ namespace HotReloadSentinel.Mcp;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using HotReloadSentinel.Diagnostics;
 using HotReloadSentinel.Verdicts;
 
 /// <summary>
@@ -80,6 +81,7 @@ public sealed class McpServer
             "hr_report" => WrapText(BuildReport()),
             "hr_watch_follow" => RunWatchFollow(arguments),
             "hr_pending_atoms" => BuildPendingAtoms(),
+            "hr_friendliness_advice" => BuildFriendlinessAdvice(arguments),
             "hr_record_verdict" => HandleRecordVerdict(arguments),
             "hr_draft_issue" => RunDraftIssue(arguments),
             _ => throw new ArgumentException($"Unknown tool: {name}")
@@ -172,19 +174,149 @@ public sealed class McpServer
                 apply_index = v.ApplyIndex,
                 artifact_pair = v.ArtifactPair,
                 verdict = v.Verdict,
-                atoms = v.Atoms.Select((a, i) => new
+                atoms = v.Atoms.Select((a, i) =>
                 {
-                    index = i,
-                    kind = a.Kind,
-                    control_hint = a.ControlHint,
-                    change_summary = a.ChangeSummary,
-                    file = a.File,
-                    line_hint = a.LineHint,
+                    var resolved = ResolveAtomFile(a.File, projectDir: null);
+                    var classification = resolved is null
+                        ? HotReloadFriendlinessAnalyzer.Classification.Unknown
+                        : HotReloadFriendlinessAnalyzer.Classify(resolved, a.LineHint).Classification;
+                    return new
+                    {
+                        index = i,
+                        kind = a.Kind,
+                        control_hint = a.ControlHint,
+                        change_summary = a.ChangeSummary,
+                        file = a.File,
+                        line_hint = a.LineHint,
+                        friendliness = ClassificationToWire(classification),
+                    };
                 })
             }),
             message = pending.Count == 0 ? "No unconfirmed atoms." : null
         };
         return WrapText(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = false }));
+    }
+
+    JsonElement BuildFriendlinessAdvice(JsonElement arguments)
+    {
+        var pending = _store.GetPending();
+        if (pending.Count == 0)
+            return WrapText(JsonSerializer.Serialize(new { advice = Array.Empty<object>(), message = "No unconfirmed atoms." }));
+
+        VerdictEntry? entry;
+        if (arguments.ValueKind != JsonValueKind.Undefined
+            && arguments.TryGetProperty("apply_index", out var ai)
+            && ai.ValueKind == JsonValueKind.Number)
+        {
+            var idx = ai.GetInt32();
+            entry = pending.FirstOrDefault(v => v.ApplyIndex == idx)
+                    ?? throw new ArgumentException($"No pending entry for apply_index={idx}");
+        }
+        else
+        {
+            entry = pending[^1];
+        }
+
+        string? projectDir = null;
+        if (arguments.ValueKind != JsonValueKind.Undefined
+            && arguments.TryGetProperty("project_dir", out var pd)
+            && pd.ValueKind == JsonValueKind.String)
+        {
+            projectDir = pd.GetString();
+        }
+
+        var advice = entry.Atoms.Select((a, i) =>
+        {
+            var resolved = ResolveAtomFile(a.File, projectDir);
+            if (resolved is null)
+            {
+                return new
+                {
+                    atom_index = i,
+                    file = a.File,
+                    line_hint = a.LineHint,
+                    resolved_path = (string?)null,
+                    classification = "unknown",
+                    enclosing_type = (string?)null,
+                    enclosing_member = (string?)null,
+                    advice = new[] { "Could not locate source file under '" + (projectDir ?? Directory.GetCurrentDirectory()) + "'. Pass project_dir to hr_friendliness_advice for better results." },
+                };
+            }
+
+            var r = HotReloadFriendlinessAnalyzer.Classify(resolved, a.LineHint);
+            return new
+            {
+                atom_index = i,
+                file = a.File,
+                line_hint = a.LineHint,
+                resolved_path = (string?)resolved,
+                classification = ClassificationToWire(r.Classification),
+                enclosing_type = r.EnclosingTypeName,
+                enclosing_member = r.EnclosingMemberName,
+                advice = r.Advice.ToArray(),
+            };
+        }).ToArray();
+
+        var assemblyHandlerPresent = HotReloadFriendlinessAnalyzer.ProjectHasMetadataUpdateHandler(
+            projectDir ?? Directory.GetCurrentDirectory());
+
+        return WrapText(JsonSerializer.Serialize(new
+        {
+            apply_index = entry.ApplyIndex,
+            project_has_metadata_update_handler = assemblyHandlerPresent,
+            advice
+        }, new JsonSerializerOptions { WriteIndented = false }));
+    }
+
+    static string ClassificationToWire(HotReloadFriendlinessAnalyzer.Classification c) => c switch
+    {
+        HotReloadFriendlinessAnalyzer.Classification.FieldOrPropertyInitializer => "field_or_property_initializer",
+        HotReloadFriendlinessAnalyzer.Classification.ConstructorBody => "constructor_body",
+        HotReloadFriendlinessAnalyzer.Classification.LifecycleHook => "lifecycle_hook",
+        HotReloadFriendlinessAnalyzer.Classification.NamedRenderMethod => "named_render_method",
+        HotReloadFriendlinessAnalyzer.Classification.OtherMethodBody => "other_method_body",
+        _ => "unknown",
+    };
+
+    /// <summary>
+    /// Resolve an atom's file (often a basename like "AddCoffeePopup.cs") to a full
+    /// source path. Searches under <paramref name="projectDir"/> (or cwd) for a
+    /// unique match. Returns null if not found or ambiguous.
+    /// </summary>
+    static string? ResolveAtomFile(string fileFromAtom, string? projectDir)
+    {
+        if (string.IsNullOrWhiteSpace(fileFromAtom)) return null;
+        if (Path.IsPathRooted(fileFromAtom) && File.Exists(fileFromAtom)) return fileFromAtom;
+
+        var root = projectDir ?? Directory.GetCurrentDirectory();
+        if (!Directory.Exists(root)) return null;
+
+        var basename = Path.GetFileName(fileFromAtom);
+        // Search shallow-first; cap to avoid runaway in giant trees.
+        var matches = SafeEnumerate(root, basename).Take(8).ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    static IEnumerable<string> SafeEnumerate(string root, string basename)
+    {
+        var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", ".git", ".vs" };
+        var stack = new Stack<string>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            var dir = stack.Pop();
+            string[] files;
+            try { files = Directory.GetFiles(dir, basename); } catch { continue; }
+            foreach (var f in files) yield return f;
+
+            string[] subs;
+            try { subs = Directory.GetDirectories(dir); } catch { continue; }
+            foreach (var s in subs)
+            {
+                if (skip.Contains(Path.GetFileName(s))) continue;
+                stack.Push(s);
+            }
+        }
     }
 
     JsonElement HandleRecordVerdict(JsonElement arguments)

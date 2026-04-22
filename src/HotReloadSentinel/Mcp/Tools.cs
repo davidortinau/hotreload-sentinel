@@ -60,8 +60,26 @@ public static class Tools
         },
         {
             "name": "hr_pending_atoms",
-            "description": "Return unconfirmed change atoms from recent hot reload apply events. Call this after detecting a new apply event to get atoms the developer should confirm.",
+            "description": "Return unconfirmed change atoms from recent hot reload apply events. Each atom includes a 'friendliness' classification (e.g. field_or_property_initializer, lifecycle_hook, named_render_method, other_method_body) so the agent can advise whether the change should auto-render or requires re-triggering the code path. Call this after detecting a new apply event to get atoms the developer should confirm.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
+            "name": "hr_friendliness_advice",
+            "description": "Get hot-reload friendliness analysis for atoms in a recent apply event. Use this when an atom comes back 'no' or 'partial' to surface concrete code-level advice (rude-edit detection, MetadataUpdateHandler suggestion, MauiReactor refactor suggestion). Defaults to the most recent pending apply.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "apply_index": {
+                        "type": "integer",
+                        "description": "Optional. The apply_index from hr_pending_atoms. Defaults to the most recent unconfirmed apply if omitted."
+                    },
+                    "project_dir": {
+                        "type": "string",
+                        "description": "Optional. Project root used to resolve atom file basenames to full paths. Defaults to the current working directory."
+                    }
+                },
+                "additionalProperties": false
+            }
         },
         {
             "name": "hr_record_verdict",

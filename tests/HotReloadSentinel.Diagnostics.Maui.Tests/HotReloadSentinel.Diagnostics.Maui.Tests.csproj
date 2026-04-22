@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Cross-target trick: the overlay state class compiles cleanly against
+      net9.0 (no MAUI dependencies). We add the source file by link rather
+      than referencing the multi-target MAUI package — the unit test only
+      needs the pure observable state machine, not the platform UI bits.
+    -->
+    <Compile Include="..\..\src\HotReloadSentinel.Diagnostics.Maui\HotReloadOverlayState.cs" Link="HotReloadOverlayState.cs" />
+    <ProjectReference Include="..\..\src\HotReloadSentinel.Diagnostics\HotReloadSentinel.Diagnostics.csproj" />
+  </ItemGroup>
+
+</Project>
