@@ -22,6 +22,7 @@ public sealed class WatchLoop
     readonly SessionLogParser _parser = new();
 
     int _lastObservedResultSuccessCount;
+    int _lastPostedAppliedResultCount;
     readonly List<PendingApplyCheck> _pendingChecks = new();
     int _lastReportedFailureForResultCount;
 
@@ -114,6 +115,14 @@ public sealed class WatchLoop
                 // the app-side counter hasn't advanced within FailureWindow,
                 // POST /failed so the in-app overlay can flip red.
                 await CheckForStuckAppliesAsync(state, selectedResult, selectedEndpoint, ct);
+
+                // Notify the app immediately on every newly-observed successful
+                // apply so the overlay flashes green without depending on the
+                // in-process MetadataUpdateHandler (which is not reliably called
+                // on all platforms — notably Mac Catalyst in sandbox mode).
+                // We key off _lastPostedAppliedResultCount which is updated
+                // AFTER CheckForStuckApplies reads _lastObservedResultSuccessCount.
+                await NotifyAppliedAsync(state, selectedEndpoint, ct);
 
                 state.Status = ComputeStatus(state);
                 _store.Write(state);
@@ -220,4 +229,22 @@ public sealed class WatchLoop
     }
 
     readonly record struct PendingApplyCheck(int ResultCount, int HeartbeatBaseline, DateTime Deadline);
+
+    async Task NotifyAppliedAsync(SentinelState state, EndpointInfo? endpoint, CancellationToken ct)
+    {
+        if (endpoint is null) return;
+        if (state.ResultSuccessCount <= _lastPostedAppliedResultCount) return;
+        _lastPostedAppliedResultCount = state.ResultSuccessCount;
+        try
+        {
+            var url = endpoint.Url.TrimEnd('/') + "/applied";
+            using var content = new StringContent("{}", Encoding.UTF8, "application/json");
+            using var resp = await s_http.PostAsync(url, content, ct);
+            _ = resp;
+        }
+        catch
+        {
+            // Best effort — overlay will simply not flash green this time.
+        }
+    }
 }

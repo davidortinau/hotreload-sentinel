@@ -62,6 +62,23 @@ public static class MetadataUpdateCounter
     }
 
     /// <summary>
+    /// Called by the diagnostics middleware when a CLI sentinel POSTs to /applied.
+    /// Raises <see cref="Applied"/> for UI-side consumers (e.g. the overlay pill)
+    /// but does NOT increment <see cref="UpdateCount"/>. UpdateCount remains the
+    /// authoritative "in-process MetadataUpdateHandler ticked" signal so the CLI's
+    /// stuck-apply detection keeps working independently.
+    /// Note: <see cref="LastUpdateUtc"/> may race with <see cref="Increment"/>;
+    /// timestamp ordering is best-effort diagnostic data.
+    /// </summary>
+    public static void NotifyCliApplied()
+    {
+        var seq = Interlocked.Increment(ref _applySequence);
+        _lastUpdateUtc = DateTime.UtcNow;
+        try { Applied?.Invoke(null, new HotReloadAppliedEventArgs(seq, _updateCount, _lastUpdateUtc)); }
+        catch { }
+    }
+
+    /// <summary>
     /// Called by the diagnostics middleware when a CLI sentinel POSTs to /failed.
     /// </summary>
     public static void ReportFailure(string? reason)

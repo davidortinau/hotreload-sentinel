@@ -84,6 +84,12 @@ public sealed class DiagnosticsEndpointMiddleware : IDisposable
             context.Response.ContentLength64 = buffer.Length;
             await context.Response.OutputStream.WriteAsync(buffer);
         }
+        else if (method == "POST" && path == "/applied")
+        {
+            MetadataUpdateCounter.NotifyCliApplied();
+            context.Response.StatusCode = 204;
+            context.Response.ContentLength64 = 0;
+        }
         else if (method == "POST" && path == "/failed")
         {
             string? reason = null;

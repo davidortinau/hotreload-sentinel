@@ -31,13 +31,18 @@ public static class MauiAppBuilderExtensions
 internal sealed class HotReloadOverlayInitializer : IMauiInitializeService
 {
     static HotReloadOverlayState? s_state;
-    static readonly List<HotReloadOverlayHost> s_hosts = new();
     static bool s_subscribed;
     static int s_subscribeRetries;
     // Bound the discovery retry so we don't spin forever in headless / misconfigured
     // hosts where Application.Current is never assigned. ~10s at the dispatcher's
     // typical cadence, after which we silently give up — overlay is debug-only.
     const int MaxSubscribeRetries = 200;
+
+    // ConditionalWeakTable holds weak references to Window keys — entries are
+    // automatically collected when the Window is garbage-collected, avoiding
+    // the leak that a plain Dictionary<Window,_> would cause in multi-window
+    // scenarios (e.g. iPad, macOS multi-window).
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Window, HotReloadWindowOverlay> s_overlays = new();
 
     public void Initialize(IServiceProvider services)
     {
@@ -69,21 +74,58 @@ internal sealed class HotReloadOverlayInitializer : IMauiInitializeService
 
         foreach (var w in app.Windows) AttachOverlay(w);
 
-        // No cross-platform "WindowCreated" event in MAUI; use PageAppearing
-        // as a hook to discover newly-opened windows. Idempotent attach
-        // guards against repeated firing.
+        // MAUI has no public cross-platform "WindowCreated" event at Application
+        // level in all versions. PageAppearing is the most reliable hook — it
+        // fires once a window has a page, which is exactly when IWindowOverlay
+        // is ready to attach. We also re-seat on every fire because MVU
+        // frameworks (MauiReactor) swap Window.Page on re-render, which on
+        // some platforms causes the native overlay subview to be lost.
         app.PageAppearing += (_, page) =>
         {
             var w = (page as Page)?.Window ?? page?.Window;
-            if (w is not null) AttachOverlay(w);
+            if (w is null) return;
+            ReattachOverlay(w);
         };
     }
 
     static void AttachOverlay(Window window)
     {
         if (s_state is null) return;
-        if (s_hosts.Any(h => ReferenceEquals(h.Window, window))) return;
-        s_hosts.Add(new HotReloadOverlayHost(window, s_state));
+        if (s_overlays.TryGetValue(window, out _)) { ReattachOverlay(window); return; }
+
+        try
+        {
+            var overlay = new HotReloadWindowOverlay(window, s_state);
+            if (window.AddOverlay(overlay))
+            {
+                s_overlays.Add(window, overlay);
+            }
+        }
+        catch
+        {
+            // If the platform doesn't support window overlays (edge case),
+            // we silently drop — the diagnostics endpoint is unaffected.
+        }
+    }
+
+    static void ReattachOverlay(Window window)
+    {
+        if (!s_overlays.TryGetValue(window, out var overlay))
+        {
+            AttachOverlay(window);
+            return;
+        }
+
+        try
+        {
+            // Remove-and-re-add forces MAUI to re-run the handler's overlay
+            // update, which re-parents the native subview on top of the new
+            // page tree. Idempotent if the overlay is still live.
+            window.RemoveOverlay(overlay);
+            window.AddOverlay(overlay);
+            overlay.Invalidate();
+        }
+        catch { }
     }
 }
 #endif

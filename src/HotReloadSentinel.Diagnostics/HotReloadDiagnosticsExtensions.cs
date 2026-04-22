@@ -41,13 +41,19 @@ public static class HotReloadDiagnosticsExtensions
 /// <summary>
 /// MetadataUpdateHandler that auto-increments the update counter.
 /// Registered via assembly attribute — no manual wiring needed.
+/// Public so the .NET hot reload runtime can reflect onto it under any
+/// trimming / visibility policy.
 /// </summary>
-internal static class HotReloadSentinelUpdateHandler
+public static class HotReloadSentinelUpdateHandler
 {
-    public static void ClearCache(Type[]? updatedTypes) { }
+    public static void ClearCache(Type[]? updatedTypes)
+    {
+        System.Diagnostics.Debug.WriteLine($"[HotReloadSentinel] ClearCache invoked (types: {updatedTypes?.Length ?? 0})");
+    }
 
     public static void UpdateApplication(Type[]? updatedTypes)
     {
+        System.Diagnostics.Debug.WriteLine($"[HotReloadSentinel] UpdateApplication invoked (types: {updatedTypes?.Length ?? 0})");
         MetadataUpdateCounter.Increment();
     }
 }

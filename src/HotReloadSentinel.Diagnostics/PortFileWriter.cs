@@ -16,7 +16,10 @@ public sealed class PortFileWriter : IDisposable
 
     public PortFileWriter(int port)
     {
-        var tmpDir = OperatingSystem.IsWindows() ? Path.GetTempPath() : "/tmp";
+        // Always prefer Path.GetTempPath() — on sandboxed hosts (Mac Catalyst,
+        // iOS, Android) this resolves to a writable per-app container dir. Only
+        // fall back to /tmp on non-Windows when we have no better option.
+        var tmpDir = Path.GetTempPath();
         var pid = Environment.ProcessId;
         _filePath = Path.Combine(tmpDir, $"hotreload-diag-{pid}.port");
 
@@ -27,9 +30,10 @@ public sealed class PortFileWriter : IDisposable
         {
             File.WriteAllText(_filePath, payload);
         }
-        catch (IOException)
+        catch (Exception)
         {
-            // Best effort — may fail in sandboxed environments
+            // Best-effort: sandboxed containers may deny writes, or the dir may
+            // not exist. Never crash the host app for diagnostics instrumentation.
         }
     }
 
@@ -45,9 +49,9 @@ public sealed class PortFileWriter : IDisposable
             if (File.Exists(_filePath))
                 File.Delete(_filePath);
         }
-        catch (IOException)
+        catch (Exception)
         {
-            // Best effort cleanup
+            // Best effort cleanup — never crash the host app on shutdown.
         }
     }
 
